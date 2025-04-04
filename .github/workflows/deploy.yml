@@ -65,6 +65,13 @@ jobs:
         working-directory: infrastructure
         run: npm run build
 
+      - name: Bootstrap CDK environment
+        working-directory: infrastructure
+        run: npm run bootstrap -- --require-approval never
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+
       - name: Deploy infrastructure
         working-directory: infrastructure
         run: npm run deploy -- --require-approval never
