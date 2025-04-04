@@ -80,12 +80,37 @@ jobs:
           # Check if the S3 bucket exists
           BUCKET_NAME="cdk-hnb659fds-assets-${{ secrets.AWS_ACCOUNT_ID }}-${{ secrets.AWS_REGION }}"
           if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-            echo "CDK assets bucket exists. Checking if it's empty..."
-            OBJECT_COUNT=$(aws s3api list-objects-v2 --bucket "$BUCKET_NAME" --query 'Contents[].Key' --output text | wc -w)
+            echo "CDK assets bucket exists. Cleaning up..."
+            
+            # Delete all versions of all objects
+            echo "Deleting all object versions..."
+            aws s3api delete-objects \
+              --bucket "$BUCKET_NAME" \
+              --delete "$(aws s3api list-object-versions \
+                --bucket "$BUCKET_NAME" \
+                --output json \
+                --query '{Objects: [].{Key:Key,VersionId:VersionId}}')"
+            
+            # Delete all delete markers
+            echo "Deleting all delete markers..."
+            aws s3api delete-objects \
+              --bucket "$BUCKET_NAME" \
+              --delete "$(aws s3api list-object-versions \
+                --bucket "$BUCKET_NAME" \
+                --output json \
+                --query '{Objects: [].{Key:Key,VersionId:VersionId}}' \
+                --versions)"
+            
+            # Verify bucket is empty
+            echo "Verifying bucket is empty..."
+            OBJECT_COUNT=$(aws s3api list-object-versions \
+              --bucket "$BUCKET_NAME" \
+              --query 'length(Versions)' \
+              --output text)
             
             if [ "$OBJECT_COUNT" -gt 0 ]; then
-              echo "Bucket is not empty. Deleting objects..."
-              aws s3 rm "s3://$BUCKET_NAME" --recursive
+              echo "Error: Bucket still contains objects after cleanup"
+              exit 1
             fi
             
             echo "Deleting bucket..."
