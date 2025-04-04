@@ -21,6 +21,17 @@ jobs:
   test:
     if: ${{ github.event.inputs.run_tests }}
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: laravel_test
+          MYSQL_USER: laravel
+          MYSQL_PASSWORD: laravel
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -31,15 +42,6 @@ jobs:
           php-version: '8.2'
           extensions: mbstring, dom, fileinfo, mysql
           coverage: xdebug
-
-      - name: Set up MySQL
-        uses: harmon758/actions-mysql@v1
-        with:
-          mysql-version: '8.0'
-          mysql-root-password: 'root'
-          mysql-database: 'laravel_test'
-          mysql-user: 'laravel'
-          mysql-password: 'laravel'
 
       - name: Copy .env.example
         run: cp .env.example .env.testing
@@ -65,7 +67,6 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   deploy:
-    needs: test
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'production' }}
 
