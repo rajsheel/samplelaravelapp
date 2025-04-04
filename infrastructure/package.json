@@ -4,7 +4,8 @@
   "description": "Infrastructure as Code for Laravel application",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc",
     "watch": "tsc -w",
     "cdk": "cdk",
     "deploy": "cdk deploy",
