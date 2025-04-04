@@ -41,43 +41,85 @@ jobs:
           npm install
           npm install -g aws-cdk
 
-      - name: Create AWS Parameter Store parameters
+      - name: Set environment variables
         run: |
-          # Generate a random APP_KEY if not provided
-          APP_KEY=${APP_KEY:-$(openssl rand -base64 32)}
+          echo "CDK_DEFAULT_ACCOUNT=${{ secrets.AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
+          echo "CDK_DEFAULT_REGION=${{ secrets.AWS_REGION }}" >> $GITHUB_ENV
+          echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          echo "DB_USERNAME=${{ secrets.DB_USERNAME }}" >> $GITHUB_ENV
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> $GITHUB_ENV
           
+          # Generate a random APP_KEY if not provided
+          if [ -z "${{ secrets.APP_KEY }}" ]; then
+            echo "APP_KEY=$(openssl rand -base64 32)" >> $GITHUB_ENV
+          else
+            echo "APP_KEY=${{ secrets.APP_KEY }}" >> $GITHUB_ENV
+          fi
+          
+          # Display environment variables (without sensitive values)
+          echo "Environment variables set:"
+          echo "CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}"
+          echo "CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}"
+          echo "ENVIRONMENT: ${{ github.event.inputs.environment }}"
+          echo "DB_USERNAME: ${{ secrets.DB_USERNAME }}"
+          echo "APP_KEY: [REDACTED]"
+
+      - name: Create and verify AWS Parameter Store parameters
+        run: |
           # Create the parameter with the correct path based on environment
+          PARAM_NAME="/${CDK_DEFAULT_ACCOUNT}/prod/APP_KEY"
+          echo "Creating parameter: $PARAM_NAME"
+          
           aws ssm put-parameter \
-            --name "/${CDK_DEFAULT_ACCOUNT}/prod/APP_KEY" \
+            --name "$PARAM_NAME" \
             --value "$APP_KEY" \
             --type "String" \
             --overwrite
+          
+          # Verify parameter was created
+          echo "Verifying parameter exists..."
+          aws ssm get-parameter --name "$PARAM_NAME" --with-decryption
+          
+          # List parameters to confirm
+          echo "Listing parameters in path: /${CDK_DEFAULT_ACCOUNT}/prod/"
+          aws ssm get-parameters-by-path --path "/${CDK_DEFAULT_ACCOUNT}/prod/" --recursive
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
-          APP_KEY: ${{ secrets.APP_KEY }}
+          CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
+          APP_KEY: ${{ env.APP_KEY }}
 
       - name: Bootstrap CDK environment
         working-directory: infrastructure
-        run: npm run bootstrap -- --require-approval never
+        run: |
+          echo "Bootstrapping CDK environment..."
+          npm run bootstrap -- --require-approval never
+          
+          # Verify bootstrap completed
+          echo "Verifying bootstrap status..."
+          aws cloudformation describe-stacks --stack-name CDKToolkit --query 'Stacks[0].StackStatus' --output text
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
+          CDK_DEFAULT_REGION: ${{ env.CDK_DEFAULT_REGION }}
 
       - name: Deploy infrastructure
         working-directory: infrastructure
-        run: npm run deploy -- --require-approval never
+        run: |
+          echo "Deploying infrastructure..."
+          npm run deploy -- --require-approval never
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
+          CDK_DEFAULT_REGION: ${{ env.CDK_DEFAULT_REGION }}
+          DB_USERNAME: ${{ env.DB_USERNAME }}
+          DB_PASSWORD: ${{ env.DB_PASSWORD }}
+          ENVIRONMENT: ${{ env.ENVIRONMENT }}
 
       - name: Build and push Docker image
         run: |
