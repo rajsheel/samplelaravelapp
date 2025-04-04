@@ -57,7 +57,7 @@ jobs:
         MOCKERY_CLOSE_ON_DESTRUCT: true
         PHP_MEMORY_LIMIT: 2G
       run: |
-        vendor/bin/phpunit --coverage-clover=coverage.xml --no-interaction
+        vendor/bin/phpunit --coverage-clover=coverage.xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
