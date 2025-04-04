@@ -31,9 +31,16 @@ export class LaravelStack extends cdk.Stack {
       containerInsights: true,
     });
 
-    // Create ECR Repository
-    const repository = new ecr.Repository(this, 'LaravelRepository', {
+    // Create ECR Repository for PHP-FPM
+    const phpRepository = new ecr.Repository(this, 'LaravelPhpRepository', {
       repositoryName: 'laravel-app',
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      emptyOnDelete: true,
+    });
+
+    // Create ECR Repository for Nginx
+    const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
+      repositoryName: 'laravel-nginx',
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       emptyOnDelete: true,
     });
@@ -104,16 +111,16 @@ export class LaravelStack extends cdk.Stack {
       subnetGroup: dbSubnets,
     });
 
-    // Create ECS Task Definition
-    const taskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelTask', {
+    // Create ECS Task Definition for PHP-FPM
+    const phpTaskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelPhpTask', {
       memoryLimitMiB: 512,
       cpu: 256,
     });
 
-    // Add container to task
-    const container = taskDefinition.addContainer('LaravelContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(repository, process.env.GITHUB_SHA || 'latest'),
-      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'laravel' }),
+    // Add PHP-FPM container to task
+    const phpContainer = phpTaskDefinition.addContainer('LaravelPhpContainer', {
+      image: ecs.ContainerImage.fromEcrRepository(phpRepository, process.env.GITHUB_SHA || 'latest'),
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'laravel-php' }),
       environment: {
         DB_CONNECTION: 'mysql',
         DB_HOST: db.dbInstanceEndpointAddress,
@@ -134,28 +141,53 @@ export class LaravelStack extends cdk.Stack {
       },
     });
 
-    container.addPortMappings({
+    // Create ECS Task Definition for Nginx
+    const nginxTaskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelNginxTask', {
+      memoryLimitMiB: 256,
+      cpu: 128,
+    });
+
+    // Add Nginx container to task
+    const nginxContainer = nginxTaskDefinition.addContainer('LaravelNginxContainer', {
+      image: ecs.ContainerImage.fromEcrRepository(nginxRepository, process.env.GITHUB_SHA || 'latest'),
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'laravel-nginx' }),
+    });
+
+    nginxContainer.addPortMappings({
       containerPort: 80,
       protocol: ecs.Protocol.TCP,
     });
 
-    // Create ECS Service
-    const service = new ecs.FargateService(this, 'LaravelService', {
+    // Create ECS Service for PHP-FPM
+    const phpService = new ecs.FargateService(this, 'LaravelPhpService', {
       cluster,
-      taskDefinition,
+      taskDefinition: phpTaskDefinition,
       desiredCount: 1,
       assignPublicIp: false,
       minHealthyPercent: 100,
       maxHealthyPercent: 200,
     });
 
-    service.attachToApplicationTargetGroup(targetGroup);
+    // Create ECS Service for Nginx
+    const nginxService = new ecs.FargateService(this, 'LaravelNginxService', {
+      cluster,
+      taskDefinition: nginxTaskDefinition,
+      desiredCount: 1,
+      assignPublicIp: false,
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
+    });
 
-    // Allow ALB to access ECS tasks
-    service.connections.allowFrom(alb, ec2.Port.tcp(80), 'Allow ALB to access ECS tasks');
+    nginxService.attachToApplicationTargetGroup(targetGroup);
 
-    // Allow ECS tasks to access RDS
-    db.connections.allowDefaultPortFrom(service, 'Allow ECS tasks to access RDS');
+    // Allow ALB to access Nginx tasks
+    nginxService.connections.allowFrom(alb, ec2.Port.tcp(80), 'Allow ALB to access Nginx tasks');
+
+    // Allow Nginx tasks to access PHP-FPM tasks
+    nginxService.connections.allowFrom(phpService, ec2.Port.tcp(9000), 'Allow Nginx to access PHP-FPM');
+
+    // Allow PHP-FPM tasks to access RDS
+    db.connections.allowDefaultPortFrom(phpService, 'Allow PHP-FPM tasks to access RDS');
 
     // Outputs
     new cdk.CfnOutput(this, 'LoadBalancerDNS', {
@@ -163,9 +195,14 @@ export class LaravelStack extends cdk.Stack {
       description: 'Load Balancer DNS',
     });
 
-    new cdk.CfnOutput(this, 'ECRRepositoryUri', {
-      value: repository.repositoryUri,
-      description: 'ECR Repository URI',
+    new cdk.CfnOutput(this, 'PhpEcrRepositoryUri', {
+      value: phpRepository.repositoryUri,
+      description: 'PHP-FPM ECR Repository URI',
+    });
+
+    new cdk.CfnOutput(this, 'NginxEcrRepositoryUri', {
+      value: nginxRepository.repositoryUri,
+      description: 'Nginx ECR Repository URI',
     });
   }
 } 
