@@ -16,11 +16,13 @@ class KernelTest extends TestCase
      */
     public function test_schedules_commands()
     {
-        // Create a mock schedule
+        // Create a mock schedule using Mockery::mock
         $schedule = Mockery::mock(Schedule::class);
-        $schedule->shouldReceive('command')->zeroOrMoreTimes()->andReturn($schedule);
+        $schedule->shouldReceive('command')
+            ->zeroOrMoreTimes()
+            ->andReturn($schedule);
 
-        // Create the kernel with the mock schedule
+        // Create the kernel
         $kernel = new Kernel($this->app, $this->app['events']);
 
         // Call the schedule method

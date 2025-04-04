@@ -4,6 +4,7 @@ namespace Tests;
 
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Mockery\Adapter\Phpunit\MockeryPHPUnitIntegration;
+use Mockery;
 
 /**
  * Base Test Case
@@ -17,4 +18,18 @@ use Mockery\Adapter\Phpunit\MockeryPHPUnitIntegration;
 abstract class TestCase extends BaseTestCase
 {
     use CreatesApplication, MockeryPHPUnitIntegration;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Mockery::getConfiguration()->setConstantsMap([
+            'Illuminate\Support\Facades\Auth' => true,
+        ]);
+    }
+
+    protected function tearDown(): void
+    {
+        Mockery::close();
+        parent::tearDown();
+    }
 }
