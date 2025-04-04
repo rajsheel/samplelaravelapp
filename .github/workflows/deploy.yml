@@ -48,7 +48,7 @@ jobs:
           
           # Create the parameter with the correct path based on environment
           aws ssm put-parameter \
-            --name "/${AWS_ACCOUNT_ID}/${ENVIRONMENT}/APP_KEY" \
+            --name "/${CDK_DEFAULT_ACCOUNT}/prod/APP_KEY" \
             --value "$APP_KEY" \
             --type "SecureString" \
             --overwrite
@@ -56,8 +56,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
           APP_KEY: ${{ secrets.APP_KEY }}
 
       - name: Bootstrap CDK environment
@@ -67,6 +66,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
 
       - name: Deploy infrastructure
         working-directory: infrastructure
@@ -75,6 +75,8 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
           ENVIRONMENT: ${{ github.event.inputs.environment }}
 
       - name: Build and push Docker image
