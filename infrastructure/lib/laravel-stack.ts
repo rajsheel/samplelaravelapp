@@ -35,7 +35,7 @@ export class LaravelStack extends cdk.Stack {
     const repository = new ecr.Repository(this, 'LaravelRepository', {
       repositoryName: 'laravel-app',
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteImages: true,
+      emptyOnDelete: true,
     });
 
     // Create ALB
@@ -83,20 +83,25 @@ export class LaravelStack extends cdk.Stack {
       allowAllOutbound: true,
     });
 
-    const db = new rds.ServerlessCluster(this, 'LaravelDB', {
-      engine: rds.DatabaseClusterEngine.auroraMysql({ version: rds.AuroraMysqlEngineVersion.VER_3_04_0 }),
-      credentials: rds.Credentials.fromSecret(dbSecret),
+    const db = new rds.DatabaseInstance(this, 'LaravelDB', {
+      engine: rds.DatabaseInstanceEngine.mysql({
+        version: rds.MysqlEngineVersion.VER_8_0_35,
+      }),
+      instanceType: ec2.InstanceType.of(
+        ec2.InstanceClass.T3,
+        ec2.InstanceSize.SMALL
+      ),
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [dbSecurityGroup],
-      defaultDatabaseName: 'laravel',
-      scaling: {
-        minCapacity: rds.AuroraCapacityUnit.ACU_1,
-        maxCapacity: rds.AuroraCapacityUnit.ACU_16,
-        autoPause: cdk.Duration.minutes(10),
-      },
+      databaseName: 'laravel',
+      credentials: rds.Credentials.fromSecret(dbSecret),
+      allocatedStorage: 20,
+      maxAllocatedStorage: 100,
+      backupRetention: cdk.Duration.days(7),
+      deleteAutomatedBackups: true,
+      removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
       subnetGroup: dbSubnets,
-      enableDataApi: true,
     });
 
     // Create ECS Task Definition
@@ -111,8 +116,8 @@ export class LaravelStack extends cdk.Stack {
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'laravel' }),
       environment: {
         DB_CONNECTION: 'mysql',
-        DB_HOST: db.clusterEndpoint.hostname,
-        DB_PORT: db.clusterEndpoint.port.toString(),
+        DB_HOST: db.dbInstanceEndpointAddress,
+        DB_PORT: db.dbInstanceEndpointPort.toString(),
         DB_DATABASE: 'laravel',
         DB_USERNAME: process.env.DB_USERNAME || 'laravel',
         APP_ENV: 'production',
@@ -140,6 +145,8 @@ export class LaravelStack extends cdk.Stack {
       taskDefinition,
       desiredCount: 1,
       assignPublicIp: false,
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
     });
 
     service.attachToApplicationTargetGroup(targetGroup);
