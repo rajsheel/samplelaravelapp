@@ -62,11 +62,11 @@ export class LaravelStack extends cdk.Stack {
       defaultTargetGroups: [targetGroup],
     });
 
-    // Create Aurora Serverless v2 Cluster
+    // Create RDS instance
     const dbSecret = new secretsmanager.Secret(this, 'LaravelDB/Secret', {
       secretName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/DB_PASSWORD`,
       generateSecretString: {
-        secretStringTemplate: JSON.stringify({ username: process.env.DB_USERNAME }),
+        secretStringTemplate: JSON.stringify({ username: process.env.DB_USERNAME || 'laravel' }),
         generateStringKey: 'password',
         excludePunctuation: true,
       },
@@ -74,12 +74,12 @@ export class LaravelStack extends cdk.Stack {
 
     const dbSubnets = new rds.SubnetGroup(this, 'LaravelDB/Subnets/Default', {
       vpc,
-      description: 'Subnet group for Aurora Serverless v2',
+      description: 'Subnet group for RDS MySQL instance',
     });
 
     const dbSecurityGroup = new ec2.SecurityGroup(this, 'LaravelDB/SecurityGroup', {
       vpc,
-      description: 'Security group for Aurora Serverless v2',
+      description: 'Security group for RDS MySQL instance',
       allowAllOutbound: true,
     });
 
