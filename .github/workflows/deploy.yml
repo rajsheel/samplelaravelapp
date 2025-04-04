@@ -64,7 +64,7 @@ jobs:
 
       - name: Deploy infrastructure
         working-directory: infrastructure
-        run: npm run deploy
+        run: npm run deploy -- --require-approval never
         env:
           CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
           CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
