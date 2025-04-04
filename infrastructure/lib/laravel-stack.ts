@@ -112,7 +112,7 @@ export class LaravelStack extends cdk.Stack {
 
     // Add container to task
     const container = taskDefinition.addContainer('LaravelContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(repository),
+      image: ecs.ContainerImage.fromEcrRepository(repository, process.env.GITHUB_SHA || 'latest'),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'laravel' }),
       environment: {
         DB_CONNECTION: 'mysql',

@@ -106,6 +106,12 @@ jobs:
           CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
           CDK_DEFAULT_REGION: ${{ env.CDK_DEFAULT_REGION }}
 
+      - name: Build and push Docker image
+        run: |
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }} .
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }}
+
       - name: Deploy infrastructure
         working-directory: infrastructure
         run: |
@@ -120,13 +126,8 @@ jobs:
           DB_USERNAME: ${{ env.DB_USERNAME }}
           DB_PASSWORD: ${{ env.DB_PASSWORD }}
           ENVIRONMENT: ${{ env.ENVIRONMENT }}
-
-      - name: Build and push Docker image
-        run: |
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-          docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }} .
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }}
+          GITHUB_SHA: ${{ github.sha }}
 
       - name: Update ECS service
         run: |
-          aws ecs update-service --cluster laravel-cluster --service laravel-service --force-new-deployment 
+          aws ecs update-service --cluster LaravelCluster --service LaravelService/Service --force-new-deployment 
