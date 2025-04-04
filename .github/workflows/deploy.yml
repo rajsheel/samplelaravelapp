@@ -43,7 +43,20 @@ jobs:
 
       - name: Install infrastructure dependencies
         working-directory: infrastructure
-        run: npm ci
+        run: |
+          # Remove existing package-lock.json and node_modules
+          rm -rf package-lock.json node_modules
+          
+          # Update package.json with correct versions
+          npm pkg set devDependencies.@types/node="20.17.30"
+          npm pkg set devDependencies.undici-types="6.19.8"
+          
+          # Install dependencies and generate new package-lock.json
+          npm install
+          
+          # Verify installation
+          npm ls @types/node
+          npm ls undici-types
 
       - name: Build infrastructure
         working-directory: infrastructure
