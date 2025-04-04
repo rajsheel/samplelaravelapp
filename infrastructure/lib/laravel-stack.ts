@@ -8,6 +8,7 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
 export class LaravelStack extends cdk.Stack {
@@ -18,145 +19,34 @@ export class LaravelStack extends cdk.Stack {
     cdk.Tags.of(this).add('Environment', 'Production');
     cdk.Tags.of(this).add('Project', 'Laravel');
 
-    // Create VPC with existing VPC lookup
+    // Create VPC
     const vpc = new ec2.Vpc(this, 'LaravelVPC', {
       maxAzs: 2,
       natGateways: 1,
-      vpcName: 'laravel-vpc', // Named VPC for easier lookup
     });
 
-    // Create ECS Cluster with existing cluster lookup
+    // Create ECS Cluster
     const cluster = new ecs.Cluster(this, 'LaravelCluster', {
       vpc,
-      clusterName: 'laravel-cluster', // Named cluster for easier lookup
       containerInsights: true,
     });
 
-    // Create Aurora MySQL Cluster with existing cluster lookup
-    const dbCluster = new rds.ServerlessCluster(this, 'LaravelDB', {
-      engine: rds.DatabaseClusterEngine.auroraMysql({
-        version: rds.AuroraMysqlEngineVersion.VER_3_03_0,
-      }),
-      vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-      },
-      scaling: {
-        autoPause: cdk.Duration.minutes(10),
-        minCapacity: rds.AuroraCapacityUnit.ACU_2,
-        maxCapacity: rds.AuroraCapacityUnit.ACU_16,
-      },
-      defaultDatabaseName: 'laravel',
-      credentials: rds.Credentials.fromGeneratedSecret('laravel'),
-      backupRetention: cdk.Duration.days(7),
-      removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
-      deletionProtection: false,
-      enableDataApi: true,
-      clusterIdentifier: 'laravel-db', // Named cluster for easier lookup
-      parameterGroup: rds.ParameterGroup.fromParameterGroupName(
-        this,
-        'DBParameterGroup',
-        'default.aurora-mysql8.0'
-      ),
-    });
-
-    // Create ECR Repository with existing repository lookup
+    // Create ECR Repository
     const repository = new ecr.Repository(this, 'LaravelRepository', {
       repositoryName: 'laravel-app',
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteImages: true,
-      lifecycleRules: [
-        {
-          maxImageCount: 5,
-        },
-      ],
     });
 
-    // Create Task Role with existing role lookup
-    const taskRole = new iam.Role(this, 'LaravelTaskRole', {
-      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
-      roleName: 'laravel-task-role', // Named role for easier lookup
-    });
-
-    // Add permissions to access SSM Parameter Store
-    taskRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: ['ssm:GetParameter', 'ssm:GetParameters'],
-        resources: ['*'],
-      })
-    );
-
-    // Add permissions to access CloudWatch Logs
-    taskRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: [
-          'logs:CreateLogStream',
-          'logs:PutLogEvents',
-          'logs:CreateLogGroup',
-        ],
-        resources: ['*'],
-      })
-    );
-
-    // Create Task Definition with existing task definition lookup
-    const taskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelTask', {
-      memoryLimitMiB: 1024,
-      cpu: 512,
-      taskRole,
-      family: 'laravel-task', // Named family for easier lookup
-    });
-
-    // Add container to task
-    const container = taskDefinition.addContainer('LaravelContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(repository, 'latest'),
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: 'laravel',
-        logRetention: logs.RetentionDays.ONE_MONTH,
-      }),
-      environment: {
-        APP_ENV: 'production',
-        APP_DEBUG: 'false',
-        DB_CONNECTION: 'mysql',
-        DB_HOST: dbCluster.clusterEndpoint.hostname,
-        DB_PORT: dbCluster.clusterEndpoint.port.toString(),
-        DB_DATABASE: 'laravel',
-        DB_USERNAME: 'laravel',
-        CACHE_DRIVER: 'redis',
-        QUEUE_CONNECTION: 'redis',
-        SESSION_DRIVER: 'redis',
-      },
-      secrets: {
-        DB_PASSWORD: ecs.Secret.fromSsmParameter(
-          ssm.StringParameter.fromSecureStringParameterAttributes(this, 'DBPasswordParam', {
-            parameterName: '/laravel/prod/DB_PASSWORD',
-            version: 1,
-          })
-        ),
-        APP_KEY: ecs.Secret.fromSsmParameter(
-          ssm.StringParameter.fromSecureStringParameterAttributes(this, 'APPKeyParam', {
-            parameterName: '/laravel/prod/APP_KEY',
-            version: 1,
-          })
-        ),
-      },
-    });
-
-    container.addPortMappings({
-      containerPort: 9000,
-      hostPort: 9000,
-    });
-
-    // Create ALB with existing ALB lookup
+    // Create ALB
     const alb = new elbv2.ApplicationLoadBalancer(this, 'LaravelALB', {
       vpc,
       internetFacing: true,
-      loadBalancerName: 'laravel-alb', // Named ALB for easier lookup
     });
 
-    // Create ALB Target Group with existing target group lookup
     const targetGroup = new elbv2.ApplicationTargetGroup(this, 'LaravelTargetGroup', {
       vpc,
-      port: 9000,
+      port: 80,
       protocol: elbv2.ApplicationProtocol.HTTP,
       targetType: elbv2.TargetType.IP,
       healthCheck: {
@@ -165,65 +55,110 @@ export class LaravelStack extends cdk.Stack {
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
       },
-      targetGroupName: 'laravel-tg', // Named target group for easier lookup
     });
 
-    // Add listener to ALB
-    const listener = alb.addListener('LaravelListener', {
+    alb.addListener('LaravelListener', {
       port: 80,
       defaultTargetGroups: [targetGroup],
     });
 
-    // Create ECS Service with existing service lookup
+    // Create Aurora Serverless v2 Cluster
+    const dbSecret = new secretsmanager.Secret(this, 'LaravelDB/Secret', {
+      secretName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/DB_PASSWORD`,
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ username: process.env.DB_USERNAME }),
+        generateStringKey: 'password',
+        excludePunctuation: true,
+      },
+    });
+
+    const dbSubnets = new rds.SubnetGroup(this, 'LaravelDB/Subnets/Default', {
+      vpc,
+      description: 'Subnet group for Aurora Serverless v2',
+    });
+
+    const dbSecurityGroup = new ec2.SecurityGroup(this, 'LaravelDB/SecurityGroup', {
+      vpc,
+      description: 'Security group for Aurora Serverless v2',
+      allowAllOutbound: true,
+    });
+
+    const db = new rds.ServerlessCluster(this, 'LaravelDB', {
+      engine: rds.DatabaseClusterEngine.auroraMysql({ version: rds.AuroraMysqlEngineVersion.VER_3_04_0 }),
+      credentials: rds.Credentials.fromSecret(dbSecret),
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [dbSecurityGroup],
+      defaultDatabaseName: 'laravel',
+      scaling: {
+        minCapacity: rds.AuroraCapacityUnit.ACU_1,
+        maxCapacity: rds.AuroraCapacityUnit.ACU_16,
+        autoPause: cdk.Duration.minutes(10),
+      },
+      subnetGroup: dbSubnets,
+      enableDataApi: true,
+    });
+
+    // Create ECS Task Definition
+    const taskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelTask', {
+      memoryLimitMiB: 512,
+      cpu: 256,
+    });
+
+    // Add container to task
+    const container = taskDefinition.addContainer('LaravelContainer', {
+      image: ecs.ContainerImage.fromEcrRepository(repository),
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'laravel' }),
+      environment: {
+        DB_CONNECTION: 'mysql',
+        DB_HOST: db.clusterEndpoint.hostname,
+        DB_PORT: db.clusterEndpoint.port.toString(),
+        DB_DATABASE: 'laravel',
+        DB_USERNAME: process.env.DB_USERNAME || 'laravel',
+        APP_ENV: 'production',
+        APP_DEBUG: 'false',
+        APP_URL: `http://${alb.loadBalancerDnsName}`,
+      },
+      secrets: {
+        DB_PASSWORD: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
+        APP_KEY: ecs.Secret.fromSsmParameter(
+          ssm.StringParameter.fromStringParameterAttributes(this, 'AppKey', {
+            parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`,
+          })
+        ),
+      },
+    });
+
+    container.addPortMappings({
+      containerPort: 80,
+      protocol: ecs.Protocol.TCP,
+    });
+
+    // Create ECS Service
     const service = new ecs.FargateService(this, 'LaravelService', {
       cluster,
       taskDefinition,
-      desiredCount: 2,
-      minHealthyPercent: 50,
-      maxHealthyPercent: 200,
+      desiredCount: 1,
       assignPublicIp: false,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-      },
-      serviceName: 'laravel-service', // Named service for easier lookup
     });
 
-    // Allow traffic from ALB to ECS
-    const albSecurityGroup = new ec2.SecurityGroup(this, 'ALBSecurityGroup', {
-      vpc,
-      description: 'Security group for ALB',
-      allowAllOutbound: true,
-      securityGroupName: 'laravel-alb-sg', // Named security group for easier lookup
-    });
-
-    service.connections.allowFrom(
-      albSecurityGroup,
-      ec2.Port.tcp(9000),
-      'Allow traffic from ALB'
-    );
-
-    // Allow ECS tasks to access RDS
-    dbCluster.connections.allowDefaultPortFrom(service);
+    service.attachToApplicationTargetGroup(targetGroup);
 
     // Allow ALB to access ECS tasks
-    service.connections.allowFrom(alb, ec2.Port.tcp(80));
+    service.connections.allowFrom(alb, ec2.Port.tcp(80), 'Allow ALB to access ECS tasks');
 
-    // Output the ALB DNS
+    // Allow ECS tasks to access RDS
+    db.connections.allowDefaultPortFrom(service, 'Allow ECS tasks to access RDS');
+
+    // Outputs
     new cdk.CfnOutput(this, 'LoadBalancerDNS', {
       value: alb.loadBalancerDnsName,
       description: 'Load Balancer DNS',
     });
 
-    // Output the ECR repository URI
-    new cdk.CfnOutput(this, 'ECRRepositoryURI', {
+    new cdk.CfnOutput(this, 'ECRRepositoryUri', {
       value: repository.repositoryUri,
       description: 'ECR Repository URI',
-    });
-
-    // Output the Aurora cluster endpoint
-    new cdk.CfnOutput(this, 'DBEndpoint', {
-      value: dbCluster.clusterEndpoint.hostname,
-      description: 'Aurora Cluster Endpoint',
     });
   }
 } 
