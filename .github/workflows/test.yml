@@ -43,6 +43,15 @@ jobs:
       - name: Copy .env.example
         run: cp .env.example .env.testing
 
+      - name: Configure testing environment
+        run: |
+          sed -i 's/DB_CONNECTION=mysql/DB_CONNECTION=mysql/' .env.testing
+          sed -i 's/DB_HOST=127.0.0.1/DB_HOST=127.0.0.1/' .env.testing
+          sed -i 's/DB_PORT=3306/DB_PORT=3306/' .env.testing
+          sed -i 's/DB_DATABASE=laravel/DB_DATABASE=laravel_test/' .env.testing
+          sed -i 's/DB_USERNAME=root/DB_USERNAME=laravel/' .env.testing
+          sed -i 's/DB_PASSWORD=/DB_PASSWORD=laravel/' .env.testing
+
       - name: Install Composer dependencies
         run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
 
