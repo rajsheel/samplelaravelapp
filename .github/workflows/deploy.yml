@@ -12,6 +12,7 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     environment: production
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -30,54 +31,58 @@ jobs:
           cache: 'npm'
           cache-dependency-path: infrastructure/package-lock.json
 
-      - name: Make deployment script executable
-        run: chmod +x deploy-infrastructure.sh
+      - name: Install infrastructure dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: Build infrastructure
+        working-directory: infrastructure
+        run: npm run build
 
       - name: Deploy infrastructure
-        run: ./deploy-infrastructure.sh
+        working-directory: infrastructure
+        run: npm run deploy
         env:
-          AWS_REGION: ${{ secrets.AWS_REGION }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
 
       - name: Get ECR repository URI
-        id: ecr
+        id: get-ecr
         run: |
           ECR_REPO=$(aws cloudformation describe-stacks \
             --stack-name LaravelStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`ECRRepositoryURI`].OutputValue' \
+            --query 'Stacks[0].Outputs[?OutputKey==`ECRRepositoryUri`].OutputValue' \
             --output text)
-          echo "repository=$ECR_REPO" >> $GITHUB_OUTPUT
+          echo "ECR_REPO=$ECR_REPO" >> $GITHUB_ENV
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
 
       - name: Build and push Docker image
-        env:
-          ECR_REPOSITORY: ${{ steps.ecr.outputs.repository }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REPOSITORY:latest -f Dockerfile.prod .
-          docker push $ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REPOSITORY:latest
+          docker build -t ${ECR_REPO}:latest -t ${ECR_REPO}:${{ github.sha }} -f Dockerfile.prod .
+          docker push ${ECR_REPO}:latest
+          docker push ${ECR_REPO}:${{ github.sha }}
 
       - name: Update ECS service
         run: |
-          aws ecs update-service --cluster laravel-cluster --service laravel-service --force-new-deployment
+          aws ecs update-service \
+            --cluster laravel-cluster \
+            --service LaravelService \
+            --force-new-deployment
 
       - name: Get ALB DNS
-        id: alb
+        id: get-alb
         run: |
           ALB_DNS=$(aws cloudformation describe-stacks \
             --stack-name LaravelStack \
             --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
             --output text)
-          echo "dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "ALB_DNS=$ALB_DNS" >> $GITHUB_ENV
 
-      - name: Notify deployment
-        uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_CHANNEL: deployments
-          SLACK_COLOR: good
-          SLACK_TITLE: Deployment Successful
-          SLACK_MESSAGE: 'Application deployed successfully to ${{ steps.alb.outputs.dns }}'
-          SLACK_FOOTER: 'Commit: ${{ github.sha }}' 
+      - name: Deployment Complete
+        run: |
+          echo "Deployment completed successfully!"
+          echo "Application is available at: ${{ env.ALB_DNS }}" 
