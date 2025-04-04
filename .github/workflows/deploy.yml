@@ -115,11 +115,20 @@ jobs:
           docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }} .
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }}
           
+          # Verify PHP-FPM image was pushed
+          echo "Verifying PHP-FPM image was pushed..."
+          aws ecr describe-images --repository-name laravel-app --image-ids imageTag=${{ github.sha }} || { echo "PHP-FPM image not found"; exit 1; }
+          
           # Build and push Nginx image
           docker build -f nginx.Dockerfile -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-nginx:${{ github.sha }} .
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-nginx:${{ github.sha }}
+          
+          # Verify Nginx image was pushed
+          echo "Verifying Nginx image was pushed..."
+          aws ecr describe-images --repository-name laravel-nginx --image-ids imageTag=${{ github.sha }} || { echo "Nginx image not found"; exit 1; }
 
       - name: Deploy infrastructure
+        id: deploy
         working-directory: infrastructure
         run: |
           echo "Deploying infrastructure..."
@@ -135,6 +144,53 @@ jobs:
           ENVIRONMENT: ${{ env.ENVIRONMENT }}
           GITHUB_SHA: ${{ github.sha }}
 
-      - name: Update ECS service
+      - name: Check deployment status
+        if: failure() && steps.deploy.outcome == 'failure'
         run: |
-          aws ecs update-service --cluster LaravelCluster --service LaravelService/Service --force-new-deployment 
+          echo "Deployment failed. Checking stack status..."
+          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name LaravelStack --query 'Stacks[0].StackStatus' --output text)
+          echo "Stack status: $STACK_STATUS"
+          
+          if [[ "$STACK_STATUS" == "CREATE_IN_PROGRESS" || "$STACK_STATUS" == "UPDATE_IN_PROGRESS" ]]; then
+            echo "Stack is still in progress. Waiting for it to complete before attempting rollback..."
+            aws cloudformation wait stack-create-complete --stack-name LaravelStack || true
+            aws cloudformation wait stack-update-complete --stack-name LaravelStack || true
+          fi
+          
+          echo "Attempting to destroy the stack..."
+          cd infrastructure && npm run destroy -- --force || echo "Failed to destroy stack. Manual intervention may be required."
+
+      - name: Update ECS service
+        if: success() || failure()
+        run: |
+          aws ecs update-service --cluster LaravelCluster --service LaravelNginxService --force-new-deployment
+          aws ecs update-service --cluster LaravelCluster --service LaravelPhpService --force-new-deployment
+
+      - name: Wait for services to stabilize
+        run: |
+          echo "Waiting for services to stabilize..."
+          sleep 60
+          
+          # Get the ALB DNS name
+          ALB_DNS=$(aws cloudformation describe-stacks --stack-name LaravelStack --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' --output text)
+          echo "ALB DNS: $ALB_DNS"
+          
+          # Wait for the ALB to be ready
+          echo "Waiting for ALB to be ready..."
+          aws elbv2 wait load-balancer-available --load-balancers $(aws elbv2 describe-load-balancers --names LaravelALB --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+          
+          # Check if the application is responding
+          echo "Checking if the application is responding..."
+          for i in {1..10}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS)
+            echo "HTTP Status: $HTTP_STATUS"
+            if [ "$HTTP_STATUS" == "200" ]; then
+              echo "Application is responding with 200 OK"
+              exit 0
+            fi
+            echo "Attempt $i: Application not ready yet, waiting 30 seconds..."
+            sleep 30
+          done
+          
+          echo "Application failed to respond with 200 OK after 10 attempts"
+          exit 1 

@@ -57,7 +57,7 @@ export class LaravelStack extends cdk.Stack {
       protocol: elbv2.ApplicationProtocol.HTTP,
       targetType: elbv2.TargetType.IP,
       healthCheck: {
-        path: '/health',
+        path: '/',
         healthyHttpCodes: '200',
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
@@ -87,8 +87,15 @@ export class LaravelStack extends cdk.Stack {
     const dbSecurityGroup = new ec2.SecurityGroup(this, 'LaravelDB/SecurityGroup', {
       vpc,
       description: 'Security group for RDS MySQL instance',
-      allowAllOutbound: true,
+      allowAllOutbound: false,
     });
+
+    // Allow outbound traffic to the VPC CIDR only
+    dbSecurityGroup.addEgressRule(
+      ec2.Peer.ipv4(vpc.vpcCidrBlock),
+      ec2.Port.allTraffic(),
+      'Allow outbound traffic to VPC CIDR'
+    );
 
     const db = new rds.DatabaseInstance(this, 'LaravelDB', {
       engine: rds.DatabaseInstanceEngine.mysql({
@@ -142,9 +149,16 @@ export class LaravelStack extends cdk.Stack {
     });
 
     // Create ECS Task Definition for Nginx
+    // Valid Fargate CPU and memory combinations:
+    // CPU (vCPU) | Memory (MiB)
+    // 256 (.25)  | 512, 1024, 2048
+    // 512 (.5)   | 1024-4096
+    // 1024 (1)   | 2048-8192
+    // 2048 (2)   | 4096-16384
+    // 4096 (4)   | 8192-30720
     const nginxTaskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelNginxTask', {
-      memoryLimitMiB: 256,
-      cpu: 128,
+      memoryLimitMiB: 512,
+      cpu: 256,
     });
 
     // Add Nginx container to task
