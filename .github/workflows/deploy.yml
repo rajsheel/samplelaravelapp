@@ -1,11 +1,6 @@
 name: Deploy Laravel Application
 
 on:
-  pull_request:
-    types: [closed]
-    branches:
-      - main
-      - master
   workflow_dispatch:
     inputs:
       environment:
@@ -16,10 +11,61 @@ on:
         options:
           - production
           - staging
+      run_tests:
+        description: 'Run tests before deployment'
+        required: true
+        default: true
+        type: boolean
 
 jobs:
+  test:
+    if: ${{ github.event.inputs.run_tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, dom, fileinfo, mysql
+          coverage: xdebug
+
+      - name: Set up MySQL
+        uses: harmon758/actions-mysql@v1
+        with:
+          mysql-version: '8.0'
+          mysql-root-password: 'root'
+          mysql-database: 'laravel_test'
+          mysql-user: 'laravel'
+          mysql-password: 'laravel'
+
+      - name: Copy .env.example
+        run: cp .env.example .env.testing
+
+      - name: Install Composer dependencies
+        run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+
+      - name: Generate key
+        run: php artisan key:generate --env=testing
+
+      - name: Run migrations
+        run: php artisan migrate --env=testing --force
+
+      - name: Run tests with coverage
+        run: |
+          php artisan test --coverage-clover=coverage.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
   deploy:
-    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    needs: test
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'production' }}
 
@@ -75,61 +121,6 @@ jobs:
             aws cloudformation delete-stack --stack-name CDKToolkit
             echo "Waiting for stack deletion to complete..."
             aws cloudformation wait stack-delete-complete --stack-name CDKToolkit
-          fi
-          
-          # Check if the S3 bucket exists
-          BUCKET_NAME="cdk-hnb659fds-assets-${{ secrets.AWS_ACCOUNT_ID }}-${{ secrets.AWS_REGION }}"
-          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-            echo "CDK assets bucket exists. Cleaning up..."
-            
-            # Get all versions of all objects
-            echo "Listing all object versions..."
-            OBJECTS=$(aws s3api list-object-versions \
-              --bucket "$BUCKET_NAME" \
-              --output json \
-              --query '{Objects: [].{Key:Key,VersionId:VersionId}}')
-            
-            # Check if there are any objects to delete
-            if [ "$(echo "$OBJECTS" | jq '.Objects | length')" -gt 0 ]; then
-              echo "Deleting all object versions..."
-              aws s3api delete-objects \
-                --bucket "$BUCKET_NAME" \
-                --delete "$OBJECTS"
-            else
-              echo "No objects found in bucket."
-            fi
-            
-            # Get all delete markers
-            echo "Listing all delete markers..."
-            DELETE_MARKERS=$(aws s3api list-object-versions \
-              --bucket "$BUCKET_NAME" \
-              --output json \
-              --query 'DeleteMarkers[*].{Key:Key,VersionId:VersionId}')
-            
-            # Check if there are any delete markers to remove
-            if [ "$(echo "$DELETE_MARKERS" | jq 'length')" -gt 0 ]; then
-              echo "Deleting all delete markers..."
-              aws s3api delete-objects \
-                --bucket "$BUCKET_NAME" \
-                --delete "{\"Objects\":$(echo "$DELETE_MARKERS" | jq -c '.')}"
-            else
-              echo "No delete markers found in bucket."
-            fi
-            
-            # Verify bucket is empty
-            echo "Verifying bucket is empty..."
-            OBJECT_COUNT=$(aws s3api list-object-versions \
-              --bucket "$BUCKET_NAME" \
-              --query 'length(Versions)' \
-              --output text)
-            
-            if [ "$OBJECT_COUNT" -gt 0 ]; then
-              echo "Error: Bucket still contains objects after cleanup"
-              exit 1
-            fi
-            
-            echo "Deleting bucket..."
-            aws s3api delete-bucket --bucket "$BUCKET_NAME"
           fi
         env:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
