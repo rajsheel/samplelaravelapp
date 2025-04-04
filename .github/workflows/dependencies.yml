@@ -1,0 +1,56 @@
+name: Update Dependencies
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # Run weekly on Monday
+  workflow_dispatch:
+
+jobs:
+  update-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: main
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: infrastructure/package-lock.json
+      
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, dom, fileinfo, mysql
+      
+      - name: Update npm dependencies
+        working-directory: infrastructure
+        run: |
+          npm install -g npm-check-updates
+          ncu -u
+          npm install
+      
+      - name: Update Composer dependencies
+        run: |
+          composer update --no-interaction --prefer-dist
+      
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: update-dependencies
+          title: 'chore: update dependencies'
+          body: |
+            Automated dependency updates
+            
+            - Updated npm dependencies in infrastructure
+            - Updated Composer dependencies
+            
+            Please review the changes and merge if everything looks good.
+          labels: dependencies,automated
+          commit-message: 'chore: update dependencies'
+          delete-branch: true 

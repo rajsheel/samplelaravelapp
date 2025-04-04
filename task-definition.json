@@ -1,0 +1,62 @@
+{
+    "family": "laravel-app",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "512",
+    "memory": "1024",
+    "executionRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskExecutionRole",
+    "taskRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskRole",
+    "containerDefinitions": [
+        {
+            "name": "laravel-app",
+            "image": "YOUR_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/laravel-app:latest",
+            "essential": true,
+            "portMappings": [
+                {
+                    "containerPort": 80,
+                    "protocol": "tcp"
+                }
+            ],
+            "environment": [
+                {
+                    "name": "APP_ENV",
+                    "value": "production"
+                },
+                {
+                    "name": "APP_DEBUG",
+                    "value": "false"
+                },
+                {
+                    "name": "DB_HOST",
+                    "value": "YOUR_RDS_ENDPOINT"
+                },
+                {
+                    "name": "DB_DATABASE",
+                    "value": "laravel"
+                }
+            ],
+            "secrets": [
+                {
+                    "name": "APP_KEY",
+                    "valueFrom": "arn:aws:ssm:YOUR_REGION:YOUR_ACCOUNT_ID:parameter/laravel/app-key"
+                },
+                {
+                    "name": "DB_USERNAME",
+                    "valueFrom": "arn:aws:ssm:YOUR_REGION:YOUR_ACCOUNT_ID:parameter/laravel/db-username"
+                },
+                {
+                    "name": "DB_PASSWORD",
+                    "valueFrom": "arn:aws:ssm:YOUR_REGION:YOUR_ACCOUNT_ID:parameter/laravel/db-password"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/laravel-app",
+                    "awslogs-region": "YOUR_REGION",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            }
+        }
+    ]
+} 

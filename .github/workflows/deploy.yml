@@ -1,0 +1,83 @@
+name: Deploy Laravel Application
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: infrastructure/package-lock.json
+
+      - name: Make deployment script executable
+        run: chmod +x deploy-infrastructure.sh
+
+      - name: Deploy infrastructure
+        run: ./deploy-infrastructure.sh
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+      - name: Get ECR repository URI
+        id: ecr
+        run: |
+          ECR_REPO=$(aws cloudformation describe-stacks \
+            --stack-name LaravelStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`ECRRepositoryURI`].OutputValue' \
+            --output text)
+          echo "repository=$ECR_REPO" >> $GITHUB_OUTPUT
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and push Docker image
+        env:
+          ECR_REPOSITORY: ${{ steps.ecr.outputs.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REPOSITORY:latest -f Dockerfile.prod .
+          docker push $ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REPOSITORY:latest
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service --cluster laravel-cluster --service laravel-service --force-new-deployment
+
+      - name: Get ALB DNS
+        id: alb
+        run: |
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name LaravelStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --output text)
+          echo "dns=$ALB_DNS" >> $GITHUB_OUTPUT
+
+      - name: Notify deployment
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_CHANNEL: deployments
+          SLACK_COLOR: good
+          SLACK_TITLE: Deployment Successful
+          SLACK_MESSAGE: 'Application deployed successfully to ${{ steps.alb.outputs.dns }}'
+          SLACK_FOOTER: 'Commit: ${{ github.sha }}' 
