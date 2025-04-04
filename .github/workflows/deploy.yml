@@ -65,6 +65,35 @@ jobs:
         working-directory: infrastructure
         run: npm run build
 
+      - name: Clean up failed CDK resources
+        run: |
+          # Check if the CDK toolkit stack exists and is in a failed state
+          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+          
+          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
+            echo "CDK toolkit stack is in a failed state. Deleting it..."
+            aws cloudformation delete-stack --stack-name CDKToolkit
+            echo "Waiting for stack deletion to complete..."
+            aws cloudformation wait stack-delete-complete --stack-name CDKToolkit
+          fi
+          
+          # Check if the S3 bucket exists
+          BUCKET_NAME="cdk-hnb659fds-assets-${{ secrets.AWS_ACCOUNT_ID }}-${{ secrets.AWS_REGION }}"
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "CDK assets bucket exists. Checking if it's empty..."
+            OBJECT_COUNT=$(aws s3api list-objects-v2 --bucket "$BUCKET_NAME" --query 'Contents[].Key' --output text | wc -w)
+            
+            if [ "$OBJECT_COUNT" -gt 0 ]; then
+              echo "Bucket is not empty. Deleting objects..."
+              aws s3 rm "s3://$BUCKET_NAME" --recursive
+            fi
+            
+            echo "Deleting bucket..."
+            aws s3api delete-bucket --bucket "$BUCKET_NAME"
+          fi
+        env:
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+
       - name: Bootstrap CDK environment
         working-directory: infrastructure
         run: npm run bootstrap -- --require-approval never
