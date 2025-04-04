@@ -1,5 +1,9 @@
+# GitHub Actions workflow for deploying Laravel application to AWS
+# This workflow builds and deploys the Laravel application to AWS using CDK
+
 name: Deploy Laravel Application
 
+# Trigger the workflow manually with environment selection
 on:
   workflow_dispatch:
     inputs:
@@ -12,17 +16,20 @@ on:
           - production
           - staging
 
+# Define the deployment job
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
     
     steps:
+      # Checkout the repository code
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # Configure AWS credentials for deployment
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -30,22 +37,30 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Set up Node.js for CDK deployment
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      # Install CDK and infrastructure dependencies
       - name: Install dependencies
         working-directory: infrastructure
         run: |
           npm install
           npm install -g aws-cdk
 
+      # Set environment variables for deployment
       - name: Set environment variables
         run: |
+          # Set AWS account and region
           echo "CDK_DEFAULT_ACCOUNT=${{ secrets.AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
           echo "CDK_DEFAULT_REGION=${{ secrets.AWS_REGION }}" >> $GITHUB_ENV
+          
+          # Set deployment environment
           echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          
+          # Set database credentials
           echo "DB_USERNAME=${{ secrets.DB_USERNAME }}" >> $GITHUB_ENV
           echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> $GITHUB_ENV
           
@@ -64,12 +79,14 @@ jobs:
           echo "DB_USERNAME: ${{ secrets.DB_USERNAME }}"
           echo "APP_KEY: [REDACTED]"
 
+      # Create and verify AWS Parameter Store parameters
       - name: Create and verify AWS Parameter Store parameters
         run: |
           # Create the parameter with the correct path based on environment
           PARAM_NAME="/${CDK_DEFAULT_ACCOUNT}/prod/APP_KEY"
           echo "Creating parameter: $PARAM_NAME"
           
+          # Store the APP_KEY in AWS Parameter Store
           aws ssm put-parameter \
             --name "$PARAM_NAME" \
             --value "$APP_KEY" \
@@ -90,6 +107,7 @@ jobs:
           CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
           APP_KEY: ${{ env.APP_KEY }}
 
+      # Bootstrap CDK environment
       - name: Bootstrap CDK environment
         working-directory: infrastructure
         run: |
@@ -106,6 +124,7 @@ jobs:
           CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
           CDK_DEFAULT_REGION: ${{ env.CDK_DEFAULT_REGION }}
 
+      # Build and push Docker images to ECR
       - name: Build and push Docker images
         run: |
           # Login to ECR
@@ -127,6 +146,7 @@ jobs:
           echo "Verifying Nginx image was pushed..."
           aws ecr describe-images --repository-name laravel-nginx --image-ids imageTag=${{ github.sha }} || { echo "Nginx image not found"; exit 1; }
 
+      # Deploy infrastructure using CDK
       - name: Deploy infrastructure
         id: deploy
         working-directory: infrastructure
@@ -144,6 +164,7 @@ jobs:
           ENVIRONMENT: ${{ env.ENVIRONMENT }}
           GITHUB_SHA: ${{ github.sha }}
 
+      # Check deployment status and rollback if needed
       - name: Check deployment status
         if: failure() && steps.deploy.outcome == 'failure'
         run: |
@@ -151,21 +172,25 @@ jobs:
           STACK_STATUS=$(aws cloudformation describe-stacks --stack-name LaravelStack --query 'Stacks[0].StackStatus' --output text)
           echo "Stack status: $STACK_STATUS"
           
+          # Wait for stack operations to complete before attempting rollback
           if [[ "$STACK_STATUS" == "CREATE_IN_PROGRESS" || "$STACK_STATUS" == "UPDATE_IN_PROGRESS" ]]; then
             echo "Stack is still in progress. Waiting for it to complete before attempting rollback..."
             aws cloudformation wait stack-create-complete --stack-name LaravelStack || true
             aws cloudformation wait stack-update-complete --stack-name LaravelStack || true
           fi
           
+          # Attempt to destroy the stack to rollback changes
           echo "Attempting to destroy the stack..."
           cd infrastructure && npm run destroy -- --force || echo "Failed to destroy stack. Manual intervention may be required."
 
+      # Update ECS services to use the new images
       - name: Update ECS service
         if: success() || failure()
         run: |
           aws ecs update-service --cluster LaravelCluster --service LaravelNginxService --force-new-deployment
           aws ecs update-service --cluster LaravelCluster --service LaravelPhpService --force-new-deployment
 
+      # Wait for services to stabilize and verify application health
       - name: Wait for services to stabilize
         run: |
           echo "Waiting for services to stabilize..."

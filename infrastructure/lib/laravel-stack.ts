@@ -11,6 +11,17 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
+/**
+ * LaravelStack - AWS CDK Stack for Laravel Application
+ * 
+ * This stack creates a complete infrastructure for running a Laravel application on AWS:
+ * - VPC with public and private subnets
+ * - RDS MySQL database
+ * - ECS Fargate cluster with PHP-FPM and Nginx containers
+ * - Application Load Balancer
+ * - ECR repositories for Docker images
+ * - Security groups and IAM roles
+ */
 export class LaravelStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -19,136 +30,140 @@ export class LaravelStack extends cdk.Stack {
     cdk.Tags.of(this).add('Environment', 'Production');
     cdk.Tags.of(this).add('Project', 'Laravel');
 
-    // Create VPC
+    // Create VPC with public and private subnets
+    // This VPC will host all our resources in a secure network
     const vpc = new ec2.Vpc(this, 'LaravelVPC', {
-      maxAzs: 2,
-      natGateways: 1,
+      maxAzs: 2, // Use 2 Availability Zones for high availability
+      natGateways: 1, // Use 1 NAT Gateway to reduce costs
     });
 
     // Create ECS Cluster
+    // This cluster will run our containerized Laravel application
     const cluster = new ecs.Cluster(this, 'LaravelCluster', {
       vpc,
+      // Note: containerInsights is deprecated, but kept for compatibility
       containerInsights: true,
     });
 
-    // Create ECR Repository for PHP-FPM
-    const phpRepository = new ecr.Repository(this, 'LaravelPhpRepository', {
+    // Create ECR Repositories
+    // These repositories will store our Docker images
+    const phpRepository = new ecr.Repository(this, 'LaravelAppRepository', {
       repositoryName: 'laravel-app',
       removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // emptyOnDelete is the new property name for autoDeleteImages
       emptyOnDelete: true,
     });
 
-    // Create ECR Repository for Nginx
     const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
       repositoryName: 'laravel-nginx',
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       emptyOnDelete: true,
     });
 
-    // Create ALB
-    const alb = new elbv2.ApplicationLoadBalancer(this, 'LaravelALB', {
-      vpc,
-      internetFacing: true,
-    });
-
-    const targetGroup = new elbv2.ApplicationTargetGroup(this, 'LaravelTargetGroup', {
-      vpc,
-      port: 80,
-      protocol: elbv2.ApplicationProtocol.HTTP,
-      targetType: elbv2.TargetType.IP,
-      healthCheck: {
-        path: '/',
-        healthyHttpCodes: '200',
-        interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(5),
-      },
-    });
-
-    alb.addListener('LaravelListener', {
-      port: 80,
-      defaultTargetGroups: [targetGroup],
-    });
-
-    // Create RDS instance
-    const dbSecret = new secretsmanager.Secret(this, 'LaravelDB/Secret', {
-      secretName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/DB_PASSWORD`,
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({ username: process.env.DB_USERNAME || 'laravel' }),
-        generateStringKey: 'password',
-        excludePunctuation: true,
-      },
-    });
-
-    const dbSubnets = new rds.SubnetGroup(this, 'LaravelDB/Subnets/Default', {
-      vpc,
-      description: 'Subnet group for RDS MySQL instance',
-    });
-
-    const dbSecurityGroup = new ec2.SecurityGroup(this, 'LaravelDB/SecurityGroup', {
+    // Create RDS Security Group
+    // This security group controls access to the RDS instance
+    const dbSecurityGroup = new ec2.SecurityGroup(this, 'RdsSecurityGroup', {
       vpc,
       description: 'Security group for RDS MySQL instance',
-      allowAllOutbound: false,
+      allowAllOutbound: false, // Restrict outbound traffic for better security
     });
 
-    // Allow outbound traffic to the VPC CIDR only
+    // Allow inbound MySQL traffic from the ECS tasks
+    dbSecurityGroup.addIngressRule(
+      ec2.Peer.ipv4(vpc.vpcCidrBlock),
+      ec2.Port.tcp(3306),
+      'Allow MySQL access from within the VPC'
+    );
+
+    // Allow outbound traffic to the VPC CIDR block
+    // This is needed for the RDS instance to communicate with other resources in the VPC
     dbSecurityGroup.addEgressRule(
       ec2.Peer.ipv4(vpc.vpcCidrBlock),
       ec2.Port.allTraffic(),
-      'Allow outbound traffic to VPC CIDR'
+      'Allow all outbound traffic to VPC CIDR block'
     );
 
-    const db = new rds.DatabaseInstance(this, 'LaravelDB', {
+    // Create RDS Subnet Group
+    // This subnet group defines which subnets the RDS instance can be placed in
+    const dbSubnetGroup = new rds.SubnetGroup(this, 'RdsSubnetGroup', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      description: 'Subnet group for RDS MySQL instance',
+    });
+
+    // Create RDS Instance
+    // This is the MySQL database for the Laravel application
+    const dbInstance = new rds.DatabaseInstance(this, 'LaravelDatabase', {
       engine: rds.DatabaseInstanceEngine.mysql({
         version: rds.MysqlEngineVersion.VER_8_0_35,
       }),
-      instanceType: ec2.InstanceType.of(
-        ec2.InstanceClass.T3,
-        ec2.InstanceSize.SMALL
-      ),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
+      // For production workloads, consider using T3.MEDIUM or larger
+      // This instance type can be made configurable via environment variables or properties
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [dbSecurityGroup],
+      subnetGroup: dbSubnetGroup,
       databaseName: 'laravel',
-      credentials: rds.Credentials.fromSecret(dbSecret),
+      credentials: rds.Credentials.fromGeneratedSecret('laravel', {
+        secretName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials`,
+        generateStringKey: 'password',
+        excludeCharacters: '"@/\\',
+      }),
       allocatedStorage: 20,
       maxAllocatedStorage: 100,
       backupRetention: cdk.Duration.days(7),
-      deleteAutomatedBackups: true,
-      removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
-      subnetGroup: dbSubnets,
+      removalPolicy: cdk.RemovalPolicy.SNAPSHOT, // Preserve data on deletion
+      monitoringInterval: cdk.Duration.minutes(1),
+      enablePerformanceInsights: true,
+      performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
+    });
+
+    // Create SSM Parameter for APP_KEY
+    // This parameter stores the Laravel application key
+    const appKeyParam = new ssm.StringParameter(this, 'AppKeyParameter', {
+      parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`,
+      stringValue: process.env.APP_KEY || Buffer.from(Math.random().toString()).toString('base64'),
+      description: 'Laravel application key',
     });
 
     // Create ECS Task Definition for PHP-FPM
+    // This task definition defines how the PHP-FPM container should run
     const phpTaskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelPhpTask', {
       memoryLimitMiB: 512,
       cpu: 256,
     });
 
-    // Add PHP-FPM container to task
+    // Add PHP-FPM container to the task definition
     const phpContainer = phpTaskDefinition.addContainer('LaravelPhpContainer', {
       image: ecs.ContainerImage.fromEcrRepository(phpRepository, process.env.GITHUB_SHA || 'latest'),
-      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'laravel-php' }),
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelPhp' }),
       environment: {
         DB_CONNECTION: 'mysql',
-        DB_HOST: db.dbInstanceEndpointAddress,
-        DB_PORT: db.dbInstanceEndpointPort.toString(),
+        DB_HOST: dbInstance.dbInstanceEndpointAddress,
+        DB_PORT: dbInstance.dbInstanceEndpointPort,
         DB_DATABASE: 'laravel',
-        DB_USERNAME: process.env.DB_USERNAME || 'laravel',
-        APP_ENV: 'production',
-        APP_DEBUG: 'false',
-        APP_URL: `http://${alb.loadBalancerDnsName}`,
+        APP_ENV: process.env.APP_ENV || 'production',
+        APP_DEBUG: process.env.APP_DEBUG || 'false',
+        APP_URL: process.env.APP_URL || 'http://localhost',
       },
       secrets: {
-        DB_PASSWORD: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
-        APP_KEY: ecs.Secret.fromSsmParameter(
-          ssm.StringParameter.fromStringParameterAttributes(this, 'AppKey', {
-            parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`,
+        DB_USERNAME: ecs.Secret.fromSsmParameter(
+          ssm.StringParameter.fromStringParameterAttributes(this, 'DbUsernameParam', {
+            parameterName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials:username`,
           })
         ),
+        DB_PASSWORD: ecs.Secret.fromSsmParameter(
+          ssm.StringParameter.fromStringParameterAttributes(this, 'DbPasswordParam', {
+            parameterName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials:password`,
+          })
+        ),
+        APP_KEY: ecs.Secret.fromSsmParameter(appKeyParam),
       },
     });
 
     // Create ECS Task Definition for Nginx
+    // This task definition defines how the Nginx container should run
     // Valid Fargate CPU and memory combinations:
     // CPU (vCPU) | Memory (MiB)
     // 256 (.25)  | 512, 1024, 2048
@@ -161,18 +176,44 @@ export class LaravelStack extends cdk.Stack {
       cpu: 256,
     });
 
-    // Add Nginx container to task
+    // Add Nginx container to the task definition
     const nginxContainer = nginxTaskDefinition.addContainer('LaravelNginxContainer', {
       image: ecs.ContainerImage.fromEcrRepository(nginxRepository, process.env.GITHUB_SHA || 'latest'),
-      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'laravel-nginx' }),
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelNginx' }),
+      portMappings: [{ containerPort: 80 }],
     });
 
-    nginxContainer.addPortMappings({
-      containerPort: 80,
-      protocol: ecs.Protocol.TCP,
+    // Create Application Load Balancer
+    // This load balancer distributes traffic to the Nginx containers
+    const alb = new elbv2.ApplicationLoadBalancer(this, 'LaravelALB', {
+      vpc,
+      internetFacing: true,
+    });
+
+    // Create ALB Target Group
+    // This target group defines how traffic is routed to the Nginx containers
+    const nginxTargetGroup = new elbv2.ApplicationTargetGroup(this, 'LaravelNginxTargetGroup', {
+      vpc,
+      port: 80,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targetType: elbv2.TargetType.IP,
+      healthCheck: {
+        path: '/',
+        healthyHttpCodes: '200',
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(5),
+      },
+    });
+
+    // Add listener to the ALB
+    // This listener accepts HTTP traffic on port 80
+    const listener = alb.addListener('LaravelListener', {
+      port: 80,
+      defaultTargetGroups: [nginxTargetGroup],
     });
 
     // Create ECS Service for PHP-FPM
+    // This service runs the PHP-FPM containers
     const phpService = new ecs.FargateService(this, 'LaravelPhpService', {
       cluster,
       taskDefinition: phpTaskDefinition,
@@ -183,6 +224,7 @@ export class LaravelStack extends cdk.Stack {
     });
 
     // Create ECS Service for Nginx
+    // This service runs the Nginx containers
     const nginxService = new ecs.FargateService(this, 'LaravelNginxService', {
       cluster,
       taskDefinition: nginxTaskDefinition,
@@ -192,29 +234,49 @@ export class LaravelStack extends cdk.Stack {
       maxHealthyPercent: 200,
     });
 
-    nginxService.attachToApplicationTargetGroup(targetGroup);
+    // Allow traffic from Nginx to PHP-FPM
+    // This security group rule allows the Nginx containers to communicate with the PHP-FPM containers
+    nginxService.connections.allowFrom(
+      phpService,
+      ec2.Port.tcp(9000),
+      'Allow traffic from Nginx to PHP-FPM'
+    );
 
-    // Allow ALB to access Nginx tasks
-    nginxService.connections.allowFrom(alb, ec2.Port.tcp(80), 'Allow ALB to access Nginx tasks');
+    // Allow traffic from ALB to Nginx
+    // This security group rule allows the ALB to communicate with the Nginx containers
+    nginxService.connections.allowFrom(
+      alb,
+      ec2.Port.tcp(80),
+      'Allow traffic from ALB to Nginx'
+    );
 
-    // Allow Nginx tasks to access PHP-FPM tasks
-    nginxService.connections.allowFrom(phpService, ec2.Port.tcp(9000), 'Allow Nginx to access PHP-FPM');
+    // Allow traffic from PHP-FPM to RDS
+    // This security group rule allows the PHP-FPM containers to communicate with the RDS instance
+    dbSecurityGroup.addIngressRule(
+      phpService.securityGroup,
+      ec2.Port.tcp(3306),
+      'Allow MySQL access from PHP-FPM'
+    );
 
-    // Allow PHP-FPM tasks to access RDS
-    db.connections.allowDefaultPortFrom(phpService, 'Allow PHP-FPM tasks to access RDS');
+    // Add Nginx service to the target group
+    // This registers the Nginx containers with the ALB target group
+    nginxTargetGroup.addTarget(nginxService);
 
-    // Outputs
+    // Output the ALB DNS name
+    // This output can be used to access the application
     new cdk.CfnOutput(this, 'LoadBalancerDNS', {
       value: alb.loadBalancerDnsName,
       description: 'Load Balancer DNS',
     });
 
-    new cdk.CfnOutput(this, 'PhpEcrRepositoryUri', {
+    // Output the ECR repository URIs
+    // These outputs can be used to push Docker images to the repositories
+    new cdk.CfnOutput(this, 'PhpRepositoryUri', {
       value: phpRepository.repositoryUri,
       description: 'PHP-FPM ECR Repository URI',
     });
 
-    new cdk.CfnOutput(this, 'NginxEcrRepositoryUri', {
+    new cdk.CfnOutput(this, 'NginxRepositoryUri', {
       value: nginxRepository.repositoryUri,
       description: 'Nginx ECR Repository URI',
     });
