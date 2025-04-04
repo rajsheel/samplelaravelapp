@@ -104,15 +104,14 @@ jobs:
             DELETE_MARKERS=$(aws s3api list-object-versions \
               --bucket "$BUCKET_NAME" \
               --output json \
-              --query '{Objects: [].{Key:Key,VersionId:VersionId}}' \
-              --query 'DeleteMarkers[*]')
+              --query 'DeleteMarkers[*].{Key:Key,VersionId:VersionId}')
             
             # Check if there are any delete markers to remove
             if [ "$(echo "$DELETE_MARKERS" | jq 'length')" -gt 0 ]; then
               echo "Deleting all delete markers..."
               aws s3api delete-objects \
                 --bucket "$BUCKET_NAME" \
-                --delete "$(echo "$DELETE_MARKERS" | jq '{Objects: [].{Key:Key,VersionId:VersionId}}')"
+                --delete "{\"Objects\":$(echo "$DELETE_MARKERS" | jq -c '.')}"
             else
               echo "No delete markers found in bucket."
             fi
