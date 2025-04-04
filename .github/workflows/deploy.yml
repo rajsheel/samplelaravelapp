@@ -50,7 +50,7 @@ jobs:
           aws ssm put-parameter \
             --name "/${CDK_DEFAULT_ACCOUNT}/prod/APP_KEY" \
             --value "$APP_KEY" \
-            --type "SecureString" \
+            --type "String" \
             --overwrite
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
