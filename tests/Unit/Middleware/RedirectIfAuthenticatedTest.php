@@ -16,8 +16,12 @@ class RedirectIfAuthenticatedTest extends TestCase
      */
     public function test_redirects_authenticated_users_to_home()
     {
-        // Mock the Auth facade
-        $authMock = $this->createMock(Auth::class);
+        // Create a mock for the Auth facade
+        $authMock = $this->getMockBuilder(Auth::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        
+        // Set up the mock to return true for check() and a user for user()
         $authMock->method('check')->willReturn(true);
         $authMock->method('user')->willReturn(new \App\Models\User());
         
@@ -46,8 +50,12 @@ class RedirectIfAuthenticatedTest extends TestCase
      */
     public function test_allows_unauthenticated_users_to_proceed()
     {
-        // Mock the Auth facade
-        $authMock = $this->createMock(Auth::class);
+        // Create a mock for the Auth facade
+        $authMock = $this->getMockBuilder(Auth::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        
+        // Set up the mock to return false for check()
         $authMock->method('check')->willReturn(false);
         
         // Replace the Auth facade with our mock

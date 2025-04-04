@@ -18,8 +18,12 @@ class BroadcastServiceProviderTest extends TestCase
         // Create the provider
         $provider = new BroadcastServiceProvider($this->app);
 
-        // Mock the Broadcast facade
-        $broadcastMock = $this->createMock(Broadcast::class);
+        // Create a mock for the Broadcast facade
+        $broadcastMock = $this->getMockBuilder(Broadcast::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        
+        // Set up the mock to expect routes() to be called once
         $broadcastMock->expects($this->once())
             ->method('routes');
         
