@@ -47,12 +47,17 @@ export class LaravelStack extends cdk.Stack {
         maxCapacity: rds.AuroraCapacityUnit.ACU_16,
       },
       defaultDatabaseName: 'laravel',
-      credentials: rds.Credentials.fromGeneratedSecret('admin'),
+      credentials: rds.Credentials.fromGeneratedSecret('laravel'),
       backupRetention: cdk.Duration.days(7),
       removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
       deletionProtection: false,
       enableDataApi: true,
       clusterIdentifier: 'laravel-db', // Named cluster for easier lookup
+      parameterGroup: rds.ParameterGroup.fromParameterGroupName(
+        this,
+        'DBParameterGroup',
+        'default.aurora-mysql8.0'
+      ),
     });
 
     // Create ECR Repository with existing repository lookup
@@ -109,35 +114,29 @@ export class LaravelStack extends cdk.Stack {
         logRetention: logs.RetentionDays.ONE_MONTH,
       }),
       environment: {
+        APP_ENV: 'production',
+        APP_DEBUG: 'false',
         DB_CONNECTION: 'mysql',
         DB_HOST: dbCluster.clusterEndpoint.hostname,
         DB_PORT: dbCluster.clusterEndpoint.port.toString(),
         DB_DATABASE: 'laravel',
-        DB_USERNAME: 'admin',
+        DB_USERNAME: 'laravel',
         CACHE_DRIVER: 'redis',
         QUEUE_CONNECTION: 'redis',
         SESSION_DRIVER: 'redis',
       },
       secrets: {
         DB_PASSWORD: ecs.Secret.fromSsmParameter(
-          ssm.StringParameter.fromSecureStringParameterAttributes(
-            this,
-            'DBPassword',
-            {
-              parameterName: '/laravel/db/password',
-              version: 1,
-            }
-          )
+          ssm.StringParameter.fromSecureStringParameterAttributes(this, 'DBPasswordParam', {
+            parameterName: '/laravel/prod/DB_PASSWORD',
+            version: 1,
+          })
         ),
         APP_KEY: ecs.Secret.fromSsmParameter(
-          ssm.StringParameter.fromSecureStringParameterAttributes(
-            this,
-            'AppKey',
-            {
-              parameterName: '/laravel/app/key',
-              version: 1,
-            }
-          )
+          ssm.StringParameter.fromSecureStringParameterAttributes(this, 'APPKeyParam', {
+            parameterName: '/laravel/prod/APP_KEY',
+            version: 1,
+          })
         ),
       },
     });
@@ -203,26 +202,11 @@ export class LaravelStack extends cdk.Stack {
       'Allow traffic from ALB'
     );
 
-    // Allow traffic from ECS to Aurora
-    dbCluster.connections.allowFrom(
-      service,
-      ec2.Port.tcp(3306),
-      'Allow MySQL access from ECS'
-    );
+    // Allow ECS tasks to access RDS
+    dbCluster.connections.allowDefaultPortFrom(service);
 
-    // Store database credentials in SSM Parameter Store
-    new ssm.StringParameter(this, 'DBPasswordParam', {
-      parameterName: '/laravel/db/password',
-      stringValue: dbCluster.secret!.secretValueFromJson('password').toString(),
-      type: ssm.ParameterType.SECURE_STRING,
-    });
-
-    // Store application key in SSM Parameter Store
-    new ssm.StringParameter(this, 'AppKeyParam', {
-      parameterName: '/laravel/app/key',
-      stringValue: 'base64:' + Buffer.from(require('crypto').randomBytes(32)).toString('base64'),
-      type: ssm.ParameterType.SECURE_STRING,
-    });
+    // Allow ALB to access ECS tasks
+    service.connections.allowFrom(alb, ec2.Port.tcp(80));
 
     // Output the ALB DNS
     new cdk.CfnOutput(this, 'LoadBalancerDNS', {
