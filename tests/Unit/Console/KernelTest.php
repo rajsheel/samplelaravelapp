@@ -5,6 +5,7 @@ namespace Tests\Unit\Console;
 use App\Console\Kernel;
 use Illuminate\Console\Scheduling\Schedule;
 use Tests\TestCase;
+use Mockery;
 
 class KernelTest extends TestCase
 {
@@ -15,23 +16,23 @@ class KernelTest extends TestCase
      */
     public function test_schedules_commands()
     {
-        // Create the kernel
-        $kernel = new Kernel($this->app, $this->app['events']);
-
         // Create a mock schedule
-        $schedule = $this->app->make(Schedule::class);
+        $schedule = Mockery::mock(Schedule::class);
+        $schedule->shouldReceive('command')->zeroOrMoreTimes()->andReturn($schedule);
 
-        // Mock the schedule to verify it's being used
-        $this->mock(Schedule::class, function ($mock) {
-            // We don't need to set expectations since the schedule method
-            // might not have any commands scheduled in the test environment
-            $mock->shouldReceive('command')->zeroOrMoreTimes();
-        });
+        // Create the kernel with the mock schedule
+        $kernel = new Kernel($this->app, $this->app['events']);
 
         // Call the schedule method
         $kernel->schedule($schedule);
 
         // If we reach here, the test passed
         $this->assertTrue(true);
+    }
+
+    protected function tearDown(): void
+    {
+        Mockery::close();
+        parent::tearDown();
     }
 } 

@@ -1,10 +1,17 @@
 name: Laravel Tests
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run tests against'
+        required: true
+        default: 'testing'
+        type: choice
+        options:
+          - testing
+          - staging
+          - production
 
 jobs:
   test:

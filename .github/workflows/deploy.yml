@@ -4,8 +4,20 @@
 name: Deploy Laravel Application
 
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: 'Version to deploy (optional)'
+        required: false
+        type: string
 
 env:
   AWS_REGION: us-east-1

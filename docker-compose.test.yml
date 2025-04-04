@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: laravel-test
+    volumes:
+      - .:/var/www
+      - /var/www/vendor
+    environment:
+      APP_ENV: testing
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ":memory:"
+      CACHE_DRIVER: array
+      SESSION_DRIVER: array
+      QUEUE_CONNECTION: sync
+      MAIL_MAILER: array
+      BCRYPT_ROUNDS: 4
+      TELESCOPE_ENABLED: false
+      MOCKERY_CLOSE_ON_DESTRUCT: true
+    command: php artisan test 
