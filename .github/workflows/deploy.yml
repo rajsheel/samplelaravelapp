@@ -11,172 +11,57 @@ on:
         options:
           - production
           - staging
-      run_tests:
-        description: 'Run tests before deployment'
-        required: true
-        default: true
-        type: boolean
 
 jobs:
-  test:
-    if: ${{ github.event.inputs.run_tests }}
-    runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: laravel_test
-          MYSQL_USER: laravel
-          MYSQL_PASSWORD: laravel
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-          extensions: mbstring, dom, fileinfo, mysql
-          coverage: xdebug
-
-      - name: Copy .env.example
-        run: cp .env.example .env.testing
-
-      - name: Install Composer dependencies
-        run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
-
-      - name: Generate key
-        run: php artisan key:generate --env=testing
-
-      - name: Run migrations
-        run: php artisan migrate --env=testing --force
-
-      - name: Run tests with coverage
-        run: |
-          php artisan test --coverage-clover=coverage.xml
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}
-
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'production' }}
-
+    environment: ${{ github.event.inputs.environment }}
+    
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
-          role-duration-seconds: 3600
-          role-session-name: GitHubActions
-          role-skip-session-tagging: true
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
-          cache-dependency-path: infrastructure/package-lock.json
 
-      - name: Install infrastructure dependencies
-        working-directory: infrastructure
+      - name: Install dependencies
         run: |
-          # Remove existing package-lock.json and node_modules
-          rm -rf package-lock.json node_modules
-          
-          # Update package.json with correct versions
-          npm pkg set devDependencies.@types/node="20.17.30"
-          npm pkg set devDependencies.undici-types="6.19.8"
-          
-          # Install dependencies and generate new package-lock.json
-          npm install
-          
-          # Verify installation
-          npm ls @types/node
-          npm ls undici-types
-
-      - name: Build infrastructure
-        working-directory: infrastructure
-        run: npm run build
-
-      - name: Clean up failed CDK resources
-        run: |
-          # Check if the CDK toolkit stack exists and is in a failed state
-          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name CDKToolkit --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-          
-          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
-            echo "CDK toolkit stack is in a failed state. Deleting it..."
-            aws cloudformation delete-stack --stack-name CDKToolkit
-            echo "Waiting for stack deletion to complete..."
-            aws cloudformation wait stack-delete-complete --stack-name CDKToolkit
-          fi
-        env:
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          npm ci
+          npm install -g aws-cdk
 
       - name: Bootstrap CDK environment
-        working-directory: infrastructure
         run: npm run bootstrap -- --require-approval never
         env:
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
-          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
 
       - name: Deploy infrastructure
-        working-directory: infrastructure
         run: npm run deploy -- --require-approval never
         env:
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
-          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-
-      - name: Get ECR repository URI
-        id: get-ecr
-        run: |
-          ECR_REPO=$(aws cloudformation describe-stacks \
-            --stack-name LaravelStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`ECRRepositoryUri`].OutputValue' \
-            --output text)
-          echo "ECR_REPO=$ECR_REPO" >> $GITHUB_ENV
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
 
       - name: Build and push Docker image
         run: |
-          docker build -t ${ECR_REPO}:latest -t ${ECR_REPO}:${{ github.sha }} -f Dockerfile.prod .
-          docker push ${ECR_REPO}:latest
-          docker push ${ECR_REPO}:${{ github.sha }}
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }} .
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }}
 
       - name: Update ECS service
         run: |
-          aws ecs update-service \
-            --cluster laravel-cluster \
-            --service LaravelService \
-            --force-new-deployment
-
-      - name: Get ALB DNS
-        id: get-alb
-        run: |
-          ALB_DNS=$(aws cloudformation describe-stacks \
-            --stack-name LaravelStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
-            --output text)
-          echo "ALB_DNS=$ALB_DNS" >> $GITHUB_ENV
-
-      - name: Deployment Complete
-        run: |
-          echo "Deployment completed successfully!"
-          echo "Application is available at: ${{ env.ALB_DNS }}" 
+          aws ecs update-service --cluster laravel-cluster --service laravel-service --force-new-deployment 
