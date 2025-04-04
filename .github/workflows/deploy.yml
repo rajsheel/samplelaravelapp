@@ -82,24 +82,40 @@ jobs:
           if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
             echo "CDK assets bucket exists. Cleaning up..."
             
-            # Delete all versions of all objects
-            echo "Deleting all object versions..."
-            aws s3api delete-objects \
+            # Get all versions of all objects
+            echo "Listing all object versions..."
+            OBJECTS=$(aws s3api list-object-versions \
               --bucket "$BUCKET_NAME" \
-              --delete "$(aws s3api list-object-versions \
-                --bucket "$BUCKET_NAME" \
-                --output json \
-                --query '{Objects: [].{Key:Key,VersionId:VersionId}}')"
+              --output json \
+              --query '{Objects: [].{Key:Key,VersionId:VersionId}}')
             
-            # Delete all delete markers
-            echo "Deleting all delete markers..."
-            aws s3api delete-objects \
-              --bucket "$BUCKET_NAME" \
-              --delete "$(aws s3api list-object-versions \
+            # Check if there are any objects to delete
+            if [ "$(echo "$OBJECTS" | jq '.Objects | length')" -gt 0 ]; then
+              echo "Deleting all object versions..."
+              aws s3api delete-objects \
                 --bucket "$BUCKET_NAME" \
-                --output json \
-                --query '{Objects: [].{Key:Key,VersionId:VersionId}}' \
-                --versions)"
+                --delete "$OBJECTS"
+            else
+              echo "No objects found in bucket."
+            fi
+            
+            # Get all delete markers
+            echo "Listing all delete markers..."
+            DELETE_MARKERS=$(aws s3api list-object-versions \
+              --bucket "$BUCKET_NAME" \
+              --output json \
+              --query '{Objects: [].{Key:Key,VersionId:VersionId}}' \
+              --versions)
+            
+            # Check if there are any delete markers to remove
+            if [ "$(echo "$DELETE_MARKERS" | jq '.Objects | length')" -gt 0 ]; then
+              echo "Deleting all delete markers..."
+              aws s3api delete-objects \
+                --bucket "$BUCKET_NAME" \
+                --delete "$DELETE_MARKERS"
+            else
+              echo "No delete markers found in bucket."
+            fi
             
             # Verify bucket is empty
             echo "Verifying bucket is empty..."
