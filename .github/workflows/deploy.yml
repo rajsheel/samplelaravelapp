@@ -41,6 +41,25 @@ jobs:
           npm install
           npm install -g aws-cdk
 
+      - name: Create AWS Parameter Store parameters
+        run: |
+          # Generate a random APP_KEY if not provided
+          APP_KEY=${APP_KEY:-$(openssl rand -base64 32)}
+          
+          # Create the parameter with the correct path based on environment
+          aws ssm put-parameter \
+            --name "/${AWS_ACCOUNT_ID}/${ENVIRONMENT}/APP_KEY" \
+            --value "$APP_KEY" \
+            --type "SecureString" \
+            --overwrite
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          APP_KEY: ${{ secrets.APP_KEY }}
+
       - name: Bootstrap CDK environment
         working-directory: infrastructure
         run: npm run bootstrap -- --require-approval never
