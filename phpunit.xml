@@ -1,13 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+PHPUnit Configuration File
+--------------------------
+This file configures PHPUnit for testing the Laravel application.
+It defines test suites, environment variables, and other testing settings.
+
+Key configurations:
+1. Test Suites: Defines Unit and Feature test suites
+2. Environment: Sets up the testing environment
+3. Database: Configures the testing database
+4. Coverage: Sets up code coverage reporting
+-->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
          bootstrap="vendor/autoload.php"
          colors="true"
 >
     <testsuites>
+        <!-- Unit Test Suite -->
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>
+        <!-- Feature Test Suite -->
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
@@ -18,11 +32,12 @@
         </include>
     </source>
     <php>
+        <!-- Environment Configuration -->
         <env name="APP_ENV" value="testing"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_DRIVER" value="array"/>
-        <!-- <env name="DB_CONNECTION" value="sqlite"/> -->
-        <!-- <env name="DB_DATABASE" value=":memory:"/> -->
+        <env name="DB_CONNECTION" value="sqlite"/>
+        <env name="DB_DATABASE" value=":memory:"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="QUEUE_CONNECTION" value="sync"/>

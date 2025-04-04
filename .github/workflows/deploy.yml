@@ -3,219 +3,133 @@
 
 name: Deploy Laravel Application
 
-# Trigger the workflow manually with environment selection
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy to'
-        required: true
-        default: 'production'
-        type: choice
-        options:
-          - production
-          - staging
+  push:
+    branches: [ main ]
 
-# Define the deployment job
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY_PHP: laravel-app
+  ECR_REPOSITORY_NGINX: laravel-nginx
+  ECS_CLUSTER: LaravelCluster
+  ECS_SERVICE_PHP: LaravelPhpService
+  ECS_SERVICE_NGINX: LaravelNginxService
+  ECS_TASK_DEFINITION_PHP: LaravelPhpTask
+  ECS_TASK_DEFINITION_NGINX: LaravelNginxTask
+  CONTAINER_NAME_PHP: LaravelPhpContainer
+  CONTAINER_NAME_NGINX: LaravelNginxContainer
+
 jobs:
   deploy:
+    name: Deploy
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    
+    timeout-minutes: 30
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
     steps:
-      # Checkout the repository code
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    - name: Checkout
+      uses: actions/checkout@v3
+      timeout-minutes: 5
 
-      # Configure AWS credentials for deployment
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+      timeout-minutes: 5
 
-      # Set up Node.js for CDK deployment
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+      timeout-minutes: 5
 
-      # Install CDK and infrastructure dependencies
-      - name: Install dependencies
-        working-directory: infrastructure
-        run: |
-          npm install
-          npm install -g aws-cdk
+    - name: Build, tag, and push image to Amazon ECR (PHP)
+      id: build-image-php
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_PHP:$IMAGE_TAG -f docker/php/Dockerfile .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_PHP:$IMAGE_TAG
+        echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY_PHP:$IMAGE_TAG"
+      timeout-minutes: 10
 
-      # Set environment variables for deployment
-      - name: Set environment variables
-        run: |
-          # Set AWS account and region
-          echo "CDK_DEFAULT_ACCOUNT=${{ secrets.AWS_ACCOUNT_ID }}" >> $GITHUB_ENV
-          echo "CDK_DEFAULT_REGION=${{ secrets.AWS_REGION }}" >> $GITHUB_ENV
-          
-          # Set deployment environment
-          echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
-          
-          # Set database credentials
-          echo "DB_USERNAME=${{ secrets.DB_USERNAME }}" >> $GITHUB_ENV
-          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> $GITHUB_ENV
-          
-          # Generate a random APP_KEY if not provided
-          if [ -z "${{ secrets.APP_KEY }}" ]; then
-            echo "APP_KEY=$(openssl rand -base64 32)" >> $GITHUB_ENV
-          else
-            echo "APP_KEY=${{ secrets.APP_KEY }}" >> $GITHUB_ENV
-          fi
-          
-          # Display environment variables (without sensitive values)
-          echo "Environment variables set:"
-          echo "CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}"
-          echo "CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}"
-          echo "ENVIRONMENT: ${{ github.event.inputs.environment }}"
-          echo "DB_USERNAME: ${{ secrets.DB_USERNAME }}"
-          echo "APP_KEY: [REDACTED]"
+    - name: Build, tag, and push image to Amazon ECR (Nginx)
+      id: build-image-nginx
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_NGINX:$IMAGE_TAG -f docker/nginx/Dockerfile .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_NGINX:$IMAGE_TAG
+        echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY_NGINX:$IMAGE_TAG"
+      timeout-minutes: 10
 
-      # Create and verify AWS Parameter Store parameters
-      - name: Create and verify AWS Parameter Store parameters
-        run: |
-          # Create the parameter with the correct path based on environment
-          PARAM_NAME="/${CDK_DEFAULT_ACCOUNT}/prod/APP_KEY"
-          echo "Creating parameter: $PARAM_NAME"
-          
-          # Store the APP_KEY in AWS Parameter Store
-          aws ssm put-parameter \
-            --name "$PARAM_NAME" \
-            --value "$APP_KEY" \
-            --type "String" \
-            --overwrite
-          
-          # Verify parameter was created
-          echo "Verifying parameter exists..."
-          aws ssm get-parameter --name "$PARAM_NAME" --with-decryption
-          
-          # List parameters to confirm
-          echo "Listing parameters in path: /${CDK_DEFAULT_ACCOUNT}/prod/"
-          aws ssm get-parameters-by-path --path "/${CDK_DEFAULT_ACCOUNT}/prod/" --recursive
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
-          APP_KEY: ${{ env.APP_KEY }}
+    - name: Download task definition
+      run: |
+        aws ecs describe-task-definition --task-definition $ECS_TASK_DEFINITION_PHP \
+        --query taskDefinition > task-definition-php.json
+        aws ecs describe-task-definition --task-definition $ECS_TASK_DEFINITION_NGINX \
+        --query taskDefinition > task-definition-nginx.json
+      timeout-minutes: 5
 
-      # Bootstrap CDK environment
-      - name: Bootstrap CDK environment
-        working-directory: infrastructure
-        run: |
-          echo "Bootstrapping CDK environment..."
-          npm run bootstrap -- --require-approval never
-          
-          # Verify bootstrap completed
-          echo "Verifying bootstrap status..."
-          aws cloudformation describe-stacks --stack-name CDKToolkit --query 'Stacks[0].StackStatus' --output text
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
-          CDK_DEFAULT_REGION: ${{ env.CDK_DEFAULT_REGION }}
+    - name: Fill in the new image ID in the Amazon ECS task definition (PHP)
+      id: task-def-php
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: task-definition-php.json
+        container-name: ${{ env.CONTAINER_NAME_PHP }}
+        image: ${{ steps.build-image-php.outputs.image }}
+      timeout-minutes: 5
 
-      # Build and push Docker images to ECR
-      - name: Build and push Docker images
-        run: |
-          # Login to ECR
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-          
-          # Build and push PHP-FPM image
-          docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }} .
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-app:${{ github.sha }}
-          
-          # Verify PHP-FPM image was pushed
-          echo "Verifying PHP-FPM image was pushed..."
-          aws ecr describe-images --repository-name laravel-app --image-ids imageTag=${{ github.sha }} || { echo "PHP-FPM image not found"; exit 1; }
-          
-          # Build and push Nginx image
-          docker build -f nginx.Dockerfile -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-nginx:${{ github.sha }} .
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/laravel-nginx:${{ github.sha }}
-          
-          # Verify Nginx image was pushed
-          echo "Verifying Nginx image was pushed..."
-          aws ecr describe-images --repository-name laravel-nginx --image-ids imageTag=${{ github.sha }} || { echo "Nginx image not found"; exit 1; }
+    - name: Fill in the new image ID in the Amazon ECS task definition (Nginx)
+      id: task-def-nginx
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: task-definition-nginx.json
+        container-name: ${{ env.CONTAINER_NAME_NGINX }}
+        image: ${{ steps.build-image-nginx.outputs.image }}
+      timeout-minutes: 5
 
-      # Deploy infrastructure using CDK
-      - name: Deploy infrastructure
-        id: deploy
-        working-directory: infrastructure
-        run: |
-          echo "Deploying infrastructure..."
-          npm run deploy -- --require-approval never
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          CDK_DEFAULT_ACCOUNT: ${{ env.CDK_DEFAULT_ACCOUNT }}
-          CDK_DEFAULT_REGION: ${{ env.CDK_DEFAULT_REGION }}
-          DB_USERNAME: ${{ env.DB_USERNAME }}
-          DB_PASSWORD: ${{ env.DB_PASSWORD }}
-          ENVIRONMENT: ${{ env.ENVIRONMENT }}
-          GITHUB_SHA: ${{ github.sha }}
+    - name: Deploy Amazon ECS task definition (PHP)
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.task-def-php.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE_PHP }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true
+      timeout-minutes: 15
 
-      # Check deployment status and rollback if needed
-      - name: Check deployment status
-        if: failure() && steps.deploy.outcome == 'failure'
-        run: |
-          echo "Deployment failed. Checking stack status..."
-          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name LaravelStack --query 'Stacks[0].StackStatus' --output text)
-          echo "Stack status: $STACK_STATUS"
-          
-          # Wait for stack operations to complete before attempting rollback
-          if [[ "$STACK_STATUS" == "CREATE_IN_PROGRESS" || "$STACK_STATUS" == "UPDATE_IN_PROGRESS" ]]; then
-            echo "Stack is still in progress. Waiting for it to complete before attempting rollback..."
-            aws cloudformation wait stack-create-complete --stack-name LaravelStack || true
-            aws cloudformation wait stack-update-complete --stack-name LaravelStack || true
-          fi
-          
-          # Attempt to destroy the stack to rollback changes
-          echo "Attempting to destroy the stack..."
-          cd infrastructure && npm run destroy -- --force || echo "Failed to destroy stack. Manual intervention may be required."
+    - name: Deploy Amazon ECS task definition (Nginx)
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.task-def-nginx.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE_NGINX }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true
+      timeout-minutes: 15
 
-      # Update ECS services to use the new images
-      - name: Update ECS service
-        if: success() || failure()
-        run: |
-          aws ecs update-service --cluster LaravelCluster --service LaravelNginxService --force-new-deployment
-          aws ecs update-service --cluster LaravelCluster --service LaravelPhpService --force-new-deployment
-
-      # Wait for services to stabilize and verify application health
-      - name: Wait for services to stabilize
-        run: |
-          echo "Waiting for services to stabilize..."
-          sleep 60
-          
-          # Get the ALB DNS name
-          ALB_DNS=$(aws cloudformation describe-stacks --stack-name LaravelStack --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' --output text)
-          echo "ALB DNS: $ALB_DNS"
-          
-          # Wait for the ALB to be ready
-          echo "Waiting for ALB to be ready..."
-          aws elbv2 wait load-balancer-available --load-balancers $(aws elbv2 describe-load-balancers --names LaravelALB --query 'LoadBalancers[0].LoadBalancerArn' --output text)
-          
-          # Check if the application is responding
-          echo "Checking if the application is responding..."
-          for i in {1..10}; do
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS)
-            echo "HTTP Status: $HTTP_STATUS"
-            if [ "$HTTP_STATUS" == "200" ]; then
-              echo "Application is responding with 200 OK"
-              exit 0
-            fi
-            echo "Attempt $i: Application not ready yet, waiting 30 seconds..."
-            sleep 30
-          done
-          
-          echo "Application failed to respond with 200 OK after 10 attempts"
-          exit 1 
+    - name: Verify deployment
+      run: |
+        # Wait for the service to stabilize
+        sleep 30
+        
+        # Check if the PHP service is running
+        PHP_TASKS=$(aws ecs list-tasks --cluster $ECS_CLUSTER --service-name $ECS_SERVICE_PHP --query 'taskArns[]' --output text)
+        if [ -z "$PHP_TASKS" ]; then
+          echo "PHP service is not running"
+          exit 1
+        fi
+        
+        # Check if the Nginx service is running
+        NGINX_TASKS=$(aws ecs list-tasks --cluster $ECS_CLUSTER --service-name $ECS_SERVICE_NGINX --query 'taskArns[]' --output text)
+        if [ -z "$NGINX_TASKS" ]; then
+          echo "Nginx service is not running"
+          exit 1
+        fi
+        
+        echo "Deployment verified successfully"
+      timeout-minutes: 10 

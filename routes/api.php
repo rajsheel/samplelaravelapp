@@ -17,3 +17,16 @@ use Illuminate\Support\Facades\Route;
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
+
+/**
+ * Health check endpoint for AWS load balancer and monitoring
+ * This endpoint returns a 200 status code if the application is running properly
+ */
+Route::get('/health', function () {
+    return response()->json([
+        'status' => 'ok',
+        'timestamp' => now()->toIso8601String(),
+        'environment' => config('app.env'),
+        'version' => config('app.version', '1.0.0'),
+    ]);
+});

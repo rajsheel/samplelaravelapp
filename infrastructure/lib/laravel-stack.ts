@@ -6,10 +6,12 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as elbv2_targets from 'aws-cdk-lib/aws-elasticloadbalancingv2-targets';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
+import { LaravelIamRoles } from './iam-roles';
 
 /**
  * LaravelStack - AWS CDK Stack for Laravel Application
@@ -107,7 +109,6 @@ export class LaravelStack extends cdk.Stack {
       databaseName: 'laravel',
       credentials: rds.Credentials.fromGeneratedSecret('laravel', {
         secretName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials`,
-        generateStringKey: 'password',
         excludeCharacters: '"@/\\',
       }),
       allocatedStorage: 20,
@@ -127,11 +128,18 @@ export class LaravelStack extends cdk.Stack {
       description: 'Laravel application key',
     });
 
+    // Create IAM roles for the ECS tasks
+    const iamRoles = new LaravelIamRoles(this, 'LaravelIamRoles', {
+      account: this.account,
+      region: this.region,
+    });
+
     // Create ECS Task Definition for PHP-FPM
     // This task definition defines how the PHP-FPM container should run
     const phpTaskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelPhpTask', {
       memoryLimitMiB: 512,
       cpu: 256,
+      executionRole: iamRoles.phpTaskRole,
     });
 
     // Add PHP-FPM container to the task definition
@@ -174,6 +182,7 @@ export class LaravelStack extends cdk.Stack {
     const nginxTaskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelNginxTask', {
       memoryLimitMiB: 512,
       cpu: 256,
+      executionRole: iamRoles.nginxTaskRole,
     });
 
     // Add Nginx container to the task definition
@@ -198,7 +207,7 @@ export class LaravelStack extends cdk.Stack {
       protocol: elbv2.ApplicationProtocol.HTTP,
       targetType: elbv2.TargetType.IP,
       healthCheck: {
-        path: '/',
+        path: '/api/health',
         healthyHttpCodes: '200',
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
@@ -221,6 +230,13 @@ export class LaravelStack extends cdk.Stack {
       assignPublicIp: false,
       minHealthyPercent: 100,
       maxHealthyPercent: 200,
+      deploymentController: {
+        type: ecs.DeploymentControllerType.ECS,
+      },
+      // Enable circuit breaker for automatic rollback
+      circuitBreaker: {
+        rollback: true,
+      },
     });
 
     // Create ECS Service for Nginx
@@ -232,6 +248,13 @@ export class LaravelStack extends cdk.Stack {
       assignPublicIp: false,
       minHealthyPercent: 100,
       maxHealthyPercent: 200,
+      deploymentController: {
+        type: ecs.DeploymentControllerType.ECS,
+      },
+      // Enable circuit breaker for automatic rollback
+      circuitBreaker: {
+        rollback: true,
+      },
     });
 
     // Allow traffic from Nginx to PHP-FPM
@@ -253,7 +276,7 @@ export class LaravelStack extends cdk.Stack {
     // Allow traffic from PHP-FPM to RDS
     // This security group rule allows the PHP-FPM containers to communicate with the RDS instance
     dbSecurityGroup.addIngressRule(
-      phpService.securityGroup,
+      ec2.Peer.securityGroupId(phpService.connections.securityGroups[0].securityGroupId),
       ec2.Port.tcp(3306),
       'Allow MySQL access from PHP-FPM'
     );
