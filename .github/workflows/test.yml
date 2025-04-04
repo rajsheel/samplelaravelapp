@@ -1,74 +1,49 @@
-name: Run Laravel Tests
+name: Laravel Tests
 
 on:
-  workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch to test'
-        required: true
-        default: 'main'
-        type: choice
-        options:
-          - main
-          - master
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   test:
+    name: Run Tests
     runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: laravel_test
-          MYSQL_USER: laravel
-          MYSQL_PASSWORD: laravel
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          ref: ${{ github.event.inputs.branch }}
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-          extensions: mbstring, dom, fileinfo, mysql
-          coverage: xdebug
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
+        coverage: xdebug
 
-      - name: Copy .env.example
-        run: cp .env.example .env.testing
+    - name: Copy .env
+      run: cp .env.example .env
 
-      - name: Configure testing environment
-        run: |
-          sed -i 's/DB_CONNECTION=mysql/DB_CONNECTION=mysql/' .env.testing
-          sed -i 's/DB_HOST=127.0.0.1/DB_HOST=127.0.0.1/' .env.testing
-          sed -i 's/DB_PORT=3306/DB_PORT=3306/' .env.testing
-          sed -i 's/DB_DATABASE=laravel/DB_DATABASE=laravel_test/' .env.testing
-          sed -i 's/DB_USERNAME=root/DB_USERNAME=laravel/' .env.testing
-          sed -i 's/DB_PASSWORD=/DB_PASSWORD=laravel/' .env.testing
+    - name: Install Composer dependencies
+      run: composer install --prefer-dist --no-interaction --no-progress
 
-      - name: Install Composer dependencies
-        run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+    - name: Generate key
+      run: php artisan key:generate
 
-      - name: Generate key
-        run: php artisan key:generate --env=testing
+    - name: Set directory permissions
+      run: chmod -R 777 storage bootstrap/cache
 
-      - name: Run migrations
-        run: php artisan migrate --env=testing --force
+    - name: Create database
+      run: |
+        mkdir -p database
+        touch database/database.sqlite
 
-      - name: Run tests with coverage
-        run: |
-          php artisan test --coverage-html=coverage-report
+    - name: Execute tests with coverage
+      run: vendor/bin/phpunit --coverage-clover=coverage.xml
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage-report/
-          retention-days: 30
-          if-no-files-found: error 
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: true 
