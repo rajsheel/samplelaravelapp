@@ -32,6 +32,29 @@ export class LaravelStack extends cdk.Stack {
     cdk.Tags.of(this).add('Environment', 'Production');
     cdk.Tags.of(this).add('Project', 'Laravel');
 
+    // Create ECR repositories for our Docker images
+    const phpRepository = new ecr.Repository(this, 'LaravelPhpRepository', {
+      repositoryName: 'laravel-app',
+      removalPolicy: cdk.RemovalPolicy.RETAIN, // Retain the repository when stack is destroyed
+      lifecycleRules: [
+        {
+          maxImageCount: 5, // Keep only the 5 most recent images
+          description: 'Only keep 5 most recent images',
+        },
+      ],
+    });
+
+    const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
+      repositoryName: 'laravel-nginx',
+      removalPolicy: cdk.RemovalPolicy.RETAIN, // Retain the repository when stack is destroyed
+      lifecycleRules: [
+        {
+          maxImageCount: 5, // Keep only the 5 most recent images
+          description: 'Only keep 5 most recent images',
+        },
+      ],
+    });
+
     // Create VPC with public and private subnets
     // This VPC will host all our resources in a secure network
     const vpc = new ec2.Vpc(this, 'LaravelVPC', {
@@ -45,21 +68,6 @@ export class LaravelStack extends cdk.Stack {
       vpc,
       // Note: containerInsights is deprecated, but kept for compatibility
       containerInsights: true,
-    });
-
-    // Create ECR Repositories
-    // These repositories will store our Docker images
-    const phpRepository = new ecr.Repository(this, 'LaravelAppRepository', {
-      repositoryName: 'laravel-app',
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      // emptyOnDelete is the new property name for autoDeleteImages
-      emptyOnDelete: true,
-    });
-
-    const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
-      repositoryName: 'laravel-nginx',
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      emptyOnDelete: true,
     });
 
     // Create RDS Security Group

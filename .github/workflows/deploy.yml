@@ -41,6 +41,32 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
       timeout-minutes: 5
 
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Install CDK dependencies
+      working-directory: infrastructure
+      run: |
+        npm install
+        npm install -g aws-cdk
+      timeout-minutes: 5
+
+    - name: Deploy infrastructure
+      working-directory: infrastructure
+      run: |
+        # Bootstrap CDK (if not already done)
+        cdk bootstrap
+
+        # Deploy the stack which includes ECR repositories
+        cdk deploy --require-approval never
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ env.AWS_REGION }}
+      timeout-minutes: 15
+
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
@@ -52,6 +78,7 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
+        # Build PHP image
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_PHP:$IMAGE_TAG -f docker/php/Dockerfile .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_PHP:$IMAGE_TAG
         echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY_PHP:$IMAGE_TAG"
@@ -63,6 +90,7 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
+        # Build Nginx image
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_NGINX:$IMAGE_TAG -f docker/nginx/Dockerfile .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_NGINX:$IMAGE_TAG
         echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY_NGINX:$IMAGE_TAG"
