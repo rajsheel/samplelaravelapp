@@ -154,7 +154,6 @@ export class LaravelStack extends cdk.Stack {
     });
 
     // Create ECS Task Definition for PHP-FPM
-    // This task definition defines how the PHP-FPM container should run
     const phpTaskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelPhpTask', {
       memoryLimitMiB: 512,
       cpu: 256,
@@ -170,27 +169,34 @@ export class LaravelStack extends cdk.Stack {
         DB_HOST: dbInstance.dbInstanceEndpointAddress,
         DB_PORT: dbInstance.dbInstanceEndpointPort,
         DB_DATABASE: 'laravel',
-        DB_USERNAME: 'laravel', // Default username for initial deployment
-        DB_PASSWORD: 'changeme', // Default password for initial deployment
+        DB_USERNAME: 'laravel',
+        DB_PASSWORD: 'changeme',
         APP_ENV: process.env.APP_ENV || 'production',
         APP_DEBUG: process.env.APP_DEBUG || 'false',
         APP_URL: process.env.APP_URL || 'http://localhost',
       },
       secrets: {
-        // Only use APP_KEY from SSM, DB credentials will be updated after deployment
         APP_KEY: ecs.Secret.fromSsmParameter(appKeyParam),
       },
     });
 
+    // Create ECS Service for PHP-FPM
+    const phpService = new ecs.FargateService(this, 'LaravelPhpService', {
+      cluster,
+      taskDefinition: phpTaskDefinition,
+      desiredCount: 1,
+      assignPublicIp: false,
+      minHealthyPercent: 0,
+      maxHealthyPercent: 100,
+      deploymentController: {
+        type: ecs.DeploymentControllerType.ECS,
+      },
+      circuitBreaker: {
+        rollback: false,
+      },
+    });
+
     // Create ECS Task Definition for Nginx
-    // This task definition defines how the Nginx container should run
-    // Valid Fargate CPU and memory combinations:
-    // CPU (vCPU) | Memory (MiB)
-    // 256 (.25)  | 512, 1024, 2048
-    // 512 (.5)   | 1024-4096
-    // 1024 (1)   | 2048-8192
-    // 2048 (2)   | 4096-16384
-    // 4096 (4)   | 8192-30720
     const nginxTaskDefinition = new ecs.FargateTaskDefinition(this, 'LaravelNginxTask', {
       memoryLimitMiB: 512,
       cpu: 256,
@@ -203,7 +209,7 @@ export class LaravelStack extends cdk.Stack {
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelNginx' }),
       portMappings: [{ containerPort: 80 }],
       environment: {
-        PHP_SERVICE_HOST: 'LaravelPhpService',
+        PHP_SERVICE_HOST: phpService.serviceName,
         PHP_SERVICE_PORT: '9000',
       },
     });
@@ -230,59 +236,30 @@ export class LaravelStack extends cdk.Stack {
       },
     });
 
-    // Add listener to the ALB
-    // This listener accepts HTTP traffic on port 80
-    const listener = alb.addListener('LaravelListener', {
-      port: 80,
-      defaultTargetGroups: [nginxTargetGroup],
-    });
-
-    // Create ECS Service for PHP-FPM
-    // This service runs the PHP-FPM containers
-    const phpService = new ecs.FargateService(this, 'LaravelPhpService', {
-      cluster,
-      taskDefinition: phpTaskDefinition,
-      desiredCount: 1,
-      assignPublicIp: false,
-      minHealthyPercent: 0, // Allow 0% healthy during deployment
-      maxHealthyPercent: 100, // Don't exceed 100% during deployment
-      deploymentController: {
-        type: ecs.DeploymentControllerType.ECS,
-      },
-      // Disable circuit breaker for initial deployment
-      circuitBreaker: {
-        rollback: false,
-      },
-    });
-
     // Create ECS Service for Nginx
-    // This service runs the Nginx containers
     const nginxService = new ecs.FargateService(this, 'LaravelNginxService', {
       cluster,
       taskDefinition: nginxTaskDefinition,
       desiredCount: 1,
       assignPublicIp: false,
-      minHealthyPercent: 0, // Allow 0% healthy during deployment
-      maxHealthyPercent: 100, // Don't exceed 100% during deployment
+      minHealthyPercent: 0,
+      maxHealthyPercent: 100,
       deploymentController: {
         type: ecs.DeploymentControllerType.ECS,
       },
-      // Disable circuit breaker for initial deployment
       circuitBreaker: {
         rollback: false,
       },
     });
 
     // Allow traffic from Nginx to PHP-FPM
-    // This security group rule allows the Nginx containers to communicate with the PHP-FPM containers
-    nginxService.connections.allowFrom(
-      phpService,
+    phpService.connections.allowFrom(
+      nginxService,
       ec2.Port.tcp(9000),
       'Allow traffic from Nginx to PHP-FPM'
     );
 
     // Allow traffic from ALB to Nginx
-    // This security group rule allows the ALB to communicate with the Nginx containers
     nginxService.connections.allowFrom(
       alb,
       ec2.Port.tcp(80),
@@ -290,7 +267,6 @@ export class LaravelStack extends cdk.Stack {
     );
 
     // Allow traffic from PHP-FPM to RDS
-    // This security group rule allows the PHP-FPM containers to communicate with the RDS instance
     dbSecurityGroup.addIngressRule(
       ec2.Peer.securityGroupId(phpService.connections.securityGroups[0].securityGroupId),
       ec2.Port.tcp(3306),
@@ -298,8 +274,18 @@ export class LaravelStack extends cdk.Stack {
     );
 
     // Add Nginx service to the target group
-    // This registers the Nginx containers with the ALB target group
     nginxTargetGroup.addTarget(nginxService);
+
+    // Output the service names for reference
+    new cdk.CfnOutput(this, 'PhpServiceName', {
+      value: phpService.serviceName,
+      description: 'PHP-FPM Service Name',
+    });
+
+    new cdk.CfnOutput(this, 'NginxServiceName', {
+      value: nginxService.serviceName,
+      description: 'Nginx Service Name',
+    });
 
     // Output the ALB DNS name
     // This output can be used to access the application
