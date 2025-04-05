@@ -36,6 +36,22 @@ export class LaravelStack extends cdk.Stack {
     const phpRepository = ecr.Repository.fromRepositoryName(this, 'LaravelPhpRepository', 'laravel-app');
     const nginxRepository = ecr.Repository.fromRepositoryName(this, 'LaravelNginxRepository', 'laravel-nginx');
 
+    // If deployOnlyECR is true, only deploy ECR repositories
+    if (this.node.tryGetContext('deployOnlyECR')) {
+      // Output the ECR repository URIs
+      new cdk.CfnOutput(this, 'PhpRepositoryUri', {
+        value: phpRepository.repositoryUri,
+        description: 'PHP-FPM ECR Repository URI',
+      });
+
+      new cdk.CfnOutput(this, 'NginxRepositoryUri', {
+        value: nginxRepository.repositoryUri,
+        description: 'Nginx ECR Repository URI',
+      });
+
+      return;
+    }
+
     // Create VPC with public and private subnets
     // This VPC will host all our resources in a secure network
     const vpc = new ec2.Vpc(this, 'LaravelVPC', {
@@ -224,17 +240,15 @@ export class LaravelStack extends cdk.Stack {
       taskDefinition: phpTaskDefinition,
       desiredCount: 1,
       assignPublicIp: false,
-      minHealthyPercent: 100,
-      maxHealthyPercent: 200,
+      minHealthyPercent: 0, // Allow 0% healthy during deployment
+      maxHealthyPercent: 100, // Don't exceed 100% during deployment
       deploymentController: {
         type: ecs.DeploymentControllerType.ECS,
       },
-      // Enable circuit breaker for automatic rollback
+      // Disable circuit breaker for initial deployment
       circuitBreaker: {
-        rollback: true,
+        rollback: false,
       },
-      // Add health check grace period
-      healthCheckGracePeriod: cdk.Duration.seconds(60),
     });
 
     // Create ECS Service for Nginx
@@ -244,17 +258,15 @@ export class LaravelStack extends cdk.Stack {
       taskDefinition: nginxTaskDefinition,
       desiredCount: 1,
       assignPublicIp: false,
-      minHealthyPercent: 100,
-      maxHealthyPercent: 200,
+      minHealthyPercent: 0, // Allow 0% healthy during deployment
+      maxHealthyPercent: 100, // Don't exceed 100% during deployment
       deploymentController: {
         type: ecs.DeploymentControllerType.ECS,
       },
-      // Enable circuit breaker for automatic rollback
+      // Disable circuit breaker for initial deployment
       circuitBreaker: {
-        rollback: true,
+        rollback: false,
       },
-      // Add health check grace period
-      healthCheckGracePeriod: cdk.Duration.seconds(60),
     });
 
     // Allow traffic from Nginx to PHP-FPM
@@ -290,18 +302,6 @@ export class LaravelStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'LoadBalancerDNS', {
       value: alb.loadBalancerDnsName,
       description: 'Load Balancer DNS',
-    });
-
-    // Output the ECR repository URIs
-    // These outputs can be used to push Docker images to the repositories
-    new cdk.CfnOutput(this, 'PhpRepositoryUri', {
-      value: phpRepository.repositoryUri,
-      description: 'PHP-FPM ECR Repository URI',
-    });
-
-    new cdk.CfnOutput(this, 'NginxRepositoryUri', {
-      value: nginxRepository.repositoryUri,
-      description: 'Nginx ECR Repository URI',
     });
   }
 } 
