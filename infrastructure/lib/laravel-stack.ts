@@ -33,27 +33,8 @@ export class LaravelStack extends cdk.Stack {
     cdk.Tags.of(this).add('Project', 'Laravel');
 
     // Create ECR repositories for our Docker images
-    const phpRepository = new ecr.Repository(this, 'LaravelPhpRepository', {
-      repositoryName: 'laravel-app',
-      removalPolicy: cdk.RemovalPolicy.RETAIN, // Retain the repository when stack is destroyed
-      lifecycleRules: [
-        {
-          maxImageCount: 5, // Keep only the 5 most recent images
-          description: 'Only keep 5 most recent images',
-        },
-      ],
-    });
-
-    const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
-      repositoryName: 'laravel-nginx',
-      removalPolicy: cdk.RemovalPolicy.RETAIN, // Retain the repository when stack is destroyed
-      lifecycleRules: [
-        {
-          maxImageCount: 5, // Keep only the 5 most recent images
-          description: 'Only keep 5 most recent images',
-        },
-      ],
-    });
+    const phpRepository = ecr.Repository.fromRepositoryName(this, 'LaravelPhpRepository', 'laravel-app');
+    const nginxRepository = ecr.Repository.fromRepositoryName(this, 'LaravelNginxRepository', 'laravel-nginx');
 
     // Create VPC with public and private subnets
     // This VPC will host all our resources in a secure network
@@ -150,52 +131,12 @@ export class LaravelStack extends cdk.Stack {
       description: 'RDS Secret ARN',
     });
 
-    // Create SSM Parameter for APP_KEY
-    const appKeyParam = new ssm.StringParameter(this, 'AppKeyParameter', {
-      parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`,
-      stringValue: process.env.APP_KEY || 'base64:' + Buffer.from(Math.random().toString()).toString('base64'),
-      description: 'Laravel application key',
-      tier: ssm.ParameterTier.STANDARD,
-      type: ssm.ParameterType.STRING
-    });
-
-    // Add a custom resource to handle existing parameters
-    new cdk.CustomResource(this, 'AppKeyParameterHandler', {
-      serviceToken: new lambda.Function(this, 'AppKeyParameterFunction', {
-        runtime: lambda.Runtime.NODEJS_18_X,
-        handler: 'index.handler',
-        code: lambda.Code.fromInline(`
-          exports.handler = async (event) => {
-            const AWS = require('aws-sdk');
-            const ssm = new AWS.SSM();
-            
-            if (event.RequestType === 'Create' || event.RequestType === 'Update') {
-              try {
-                await ssm.putParameter({
-                  Name: '${appKeyParam.parameterName}',
-                  Value: '${appKeyParam.stringValue}',
-                  Type: 'SecureString',
-                  Overwrite: true
-                }).promise();
-              } catch (error) {
-                console.error('Error updating parameter:', error);
-              }
-            }
-            
-            return {
-              PhysicalResourceId: '${appKeyParam.parameterName}',
-              Data: {}
-            };
-          };
-        `),
-        initialPolicy: [
-          new iam.PolicyStatement({
-            actions: ['ssm:PutParameter'],
-            resources: ['*']
-          })
-        ]
-      }).functionArn
-    });
+    // Reference existing SSM Parameter for APP_KEY
+    const appKeyParam = ssm.StringParameter.fromStringParameterName(
+      this,
+      'AppKeyParameter',
+      `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`
+    );
 
     // Create IAM roles for the ECS tasks
     const iamRoles = new LaravelIamRoles(this, 'LaravelIamRoles', {
