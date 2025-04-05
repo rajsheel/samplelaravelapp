@@ -144,6 +144,12 @@ export class LaravelStack extends cdk.Stack {
       }),
     });
 
+    // Output the RDS secret ARN for reference
+    new cdk.CfnOutput(this, 'DbSecretArn', {
+      value: dbInstance.secret?.secretArn || 'Secret not available',
+      description: 'RDS Secret ARN',
+    });
+
     // Create SSM Parameter for APP_KEY
     // This parameter stores the Laravel application key
     const appKeyParam = new ssm.StringParameter(this, 'AppKeyParameter', {
@@ -175,21 +181,14 @@ export class LaravelStack extends cdk.Stack {
         DB_HOST: dbInstance.dbInstanceEndpointAddress,
         DB_PORT: dbInstance.dbInstanceEndpointPort,
         DB_DATABASE: 'laravel',
+        DB_USERNAME: 'laravel', // Default username for initial deployment
+        DB_PASSWORD: 'changeme', // Default password for initial deployment
         APP_ENV: process.env.APP_ENV || 'production',
         APP_DEBUG: process.env.APP_DEBUG || 'false',
         APP_URL: process.env.APP_URL || 'http://localhost',
       },
       secrets: {
-        DB_USERNAME: ecs.Secret.fromSsmParameter(
-          ssm.StringParameter.fromStringParameterAttributes(this, 'DbUsernameParam', {
-            parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials:username`,
-          })
-        ),
-        DB_PASSWORD: ecs.Secret.fromSsmParameter(
-          ssm.StringParameter.fromStringParameterAttributes(this, 'DbPasswordParam', {
-            parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials:password`,
-          })
-        ),
+        // Only use APP_KEY from SSM, DB credentials will be updated after deployment
         APP_KEY: ecs.Secret.fromSsmParameter(appKeyParam),
       },
     });

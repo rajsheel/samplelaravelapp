@@ -172,4 +172,45 @@ jobs:
         fi
         
         echo "Deployment verified successfully"
+      timeout-minutes: 10
+
+    - name: Update ECS task definition with database credentials
+      run: |
+        # Get the RDS secret ARN from CloudFormation outputs
+        DB_SECRET_ARN=$(aws cloudformation describe-stacks --stack-name LaravelStack --query 'Stacks[0].Outputs[?OutputKey==`DbSecretArn`].OutputValue' --output text)
+        
+        if [ "$DB_SECRET_ARN" != "Secret not available" ]; then
+          echo "Updating PHP task definition with database credentials from $DB_SECRET_ARN"
+          
+          # Get the current task definition
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $ECS_TASK_DEFINITION_PHP --query 'taskDefinition' --output json)
+          
+          # Update the task definition with the secret
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg secret "$DB_SECRET_ARN" '
+            .containerDefinitions[0].secrets = [
+              {
+                "name": "DB_USERNAME",
+                "valueFrom": $secret + ":username"
+              },
+              {
+                "name": "DB_PASSWORD",
+                "valueFrom": $secret + ":password"
+              },
+              {
+                "name": "APP_KEY",
+                "valueFrom": "/${{ env.CDK_DEFAULT_ACCOUNT }}/prod/APP_KEY"
+              }
+            ]
+          ')
+          
+          # Register the new task definition
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          
+          # Update the service to use the new task definition
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_PHP --task-definition $NEW_TASK_DEF_ARN
+          
+          echo "Updated PHP task definition with database credentials"
+        else
+          echo "RDS secret not available, skipping task definition update"
+        fi
       timeout-minutes: 10 
