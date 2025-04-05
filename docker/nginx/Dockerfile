@@ -15,6 +15,10 @@ COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 RUN chown -R nginx:nginx /etc/nginx/conf.d && \
     chmod -R 755 /etc/nginx/conf.d
 
+# Set default environment variables for service discovery
+ENV PHP_SERVICE_HOST=localhost \
+    PHP_SERVICE_PORT=9000
+
 # Expose port 80
 EXPOSE 80
 

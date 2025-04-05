@@ -202,6 +202,10 @@ export class LaravelStack extends cdk.Stack {
       image: ecs.ContainerImage.fromEcrRepository(nginxRepository, process.env.GITHUB_SHA || 'latest'),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelNginx' }),
       portMappings: [{ containerPort: 80 }],
+      environment: {
+        PHP_SERVICE_HOST: 'LaravelPhpService',
+        PHP_SERVICE_PORT: '9000',
+      },
     });
 
     // Create Application Load Balancer
