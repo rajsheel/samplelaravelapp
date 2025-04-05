@@ -116,7 +116,7 @@ export class LaravelStack extends cdk.Stack {
       subnetGroup: dbSubnetGroup,
       databaseName: 'laravel',
       credentials: rds.Credentials.fromGeneratedSecret('laravel', {
-        secretName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials`,
+        secretName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials`,
         excludeCharacters: '"@/\\',
       }),
       allocatedStorage: 20,
@@ -126,6 +126,22 @@ export class LaravelStack extends cdk.Stack {
       monitoringInterval: cdk.Duration.minutes(1),
       enablePerformanceInsights: true,
       performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
+      // Add encryption for better security
+      storageEncrypted: true,
+      // Add multi-AZ for high availability
+      multiAz: true,
+      // Add parameter group for better performance
+      parameterGroup: new rds.ParameterGroup(this, 'LaravelDbParameterGroup', {
+        engine: rds.DatabaseInstanceEngine.mysql({
+          version: rds.MysqlEngineVersion.VER_8_0_35,
+        }),
+        parameters: {
+          'character_set_server': 'utf8mb4',
+          'collation_server': 'utf8mb4_unicode_ci',
+          'max_connections': '1000',
+          'innodb_buffer_pool_size': '1073741824', // 1GB
+        },
+      }),
     });
 
     // Create SSM Parameter for APP_KEY
@@ -166,12 +182,12 @@ export class LaravelStack extends cdk.Stack {
       secrets: {
         DB_USERNAME: ecs.Secret.fromSsmParameter(
           ssm.StringParameter.fromStringParameterAttributes(this, 'DbUsernameParam', {
-            parameterName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials:username`,
+            parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials:username`,
           })
         ),
         DB_PASSWORD: ecs.Secret.fromSsmParameter(
           ssm.StringParameter.fromStringParameterAttributes(this, 'DbPasswordParam', {
-            parameterName: `${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials:password`,
+            parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/laravel-db-credentials:password`,
           })
         ),
         APP_KEY: ecs.Secret.fromSsmParameter(appKeyParam),
@@ -245,6 +261,8 @@ export class LaravelStack extends cdk.Stack {
       circuitBreaker: {
         rollback: true,
       },
+      // Add health check grace period
+      healthCheckGracePeriod: cdk.Duration.seconds(60),
     });
 
     // Create ECS Service for Nginx
@@ -263,6 +281,8 @@ export class LaravelStack extends cdk.Stack {
       circuitBreaker: {
         rollback: true,
       },
+      // Add health check grace period
+      healthCheckGracePeriod: cdk.Duration.seconds(60),
     });
 
     // Allow traffic from Nginx to PHP-FPM
