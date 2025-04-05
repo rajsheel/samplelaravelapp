@@ -1,19 +1,19 @@
 FROM nginx:1.25-alpine
 
-# Create a non-root user if it doesn't exist
-RUN getent passwd www-data > /dev/null || adduser -D -H -u 1000 -s /sbin/nologin www-data
-
-# Create directory for Laravel public files
-RUN mkdir -p /var/www/public && chown -R www-data:www-data /var/www/public
+# Create directory for Laravel public files and set permissions
+RUN mkdir -p /var/www/public && \
+    chown -R www-data:www-data /var/www/public && \
+    chmod -R 755 /var/www/public
 
 # Copy Laravel public files
-COPY public /var/www/public
+COPY --chown=www-data:www-data public /var/www/public
 
 # Copy Nginx configuration
 COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 
 # Change ownership of the Nginx configuration
-RUN chown -R www-data:www-data /etc/nginx/conf.d
+RUN chown -R www-data:www-data /etc/nginx/conf.d && \
+    chmod -R 755 /etc/nginx/conf.d
 
 # Expose port 80
 EXPOSE 80
