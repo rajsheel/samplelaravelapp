@@ -1,7 +1,7 @@
 FROM nginx:1.25-alpine
 
 # Create a non-root user if it doesn't exist
-RUN id -u www-data > /dev/null 2>&1 || adduser -D -H -u 1000 -s /sbin/nologin www-data
+RUN getent passwd www-data > /dev/null || adduser -D -H -u 1000 -s /sbin/nologin www-data
 
 # Create directory for Laravel public files
 RUN mkdir -p /var/www/public && chown -R www-data:www-data /var/www/public
