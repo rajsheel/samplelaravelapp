@@ -33,8 +33,27 @@ export class LaravelStack extends cdk.Stack {
     cdk.Tags.of(this).add('Project', 'Laravel');
 
     // Create ECR repositories for our Docker images
-    const phpRepository = ecr.Repository.fromRepositoryName(this, 'LaravelPhpRepository', 'laravel-app');
-    const nginxRepository = ecr.Repository.fromRepositoryName(this, 'LaravelNginxRepository', 'laravel-nginx');
+    const phpRepository = new ecr.Repository(this, 'LaravelPhpRepository', {
+      repositoryName: 'laravel-app',
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteImages: true,
+      lifecycleRules: [
+        {
+          maxImageCount: 5,
+        },
+      ],
+    });
+
+    const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
+      repositoryName: 'laravel-nginx',
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteImages: true,
+      lifecycleRules: [
+        {
+          maxImageCount: 5,
+        },
+      ],
+    });
 
     // If deployOnlyECR is true, only deploy ECR repositories
     if (this.node.tryGetContext('deployOnlyECR')) {
@@ -162,7 +181,7 @@ export class LaravelStack extends cdk.Stack {
 
     // Add PHP-FPM container to the task definition
     const phpContainer = phpTaskDefinition.addContainer('LaravelPhpContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(phpRepository, process.env.GITHUB_SHA || 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(phpRepository, this.node.tryGetContext('GITHUB_SHA') || 'latest'),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelPhp' }),
       environment: {
         DB_CONNECTION: 'mysql',
@@ -205,7 +224,7 @@ export class LaravelStack extends cdk.Stack {
 
     // Add Nginx container to the task definition
     const nginxContainer = nginxTaskDefinition.addContainer('LaravelNginxContainer', {
-      image: ecs.ContainerImage.fromEcrRepository(nginxRepository, process.env.GITHUB_SHA || 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(nginxRepository, this.node.tryGetContext('GITHUB_SHA') || 'latest'),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelNginx' }),
       portMappings: [{ containerPort: 80 }],
       environment: {
@@ -215,25 +234,31 @@ export class LaravelStack extends cdk.Stack {
     });
 
     // Create Application Load Balancer
-    // This load balancer distributes traffic to the Nginx containers
     const alb = new elbv2.ApplicationLoadBalancer(this, 'LaravelALB', {
       vpc,
       internetFacing: true,
     });
 
     // Create ALB Target Group
-    // This target group defines how traffic is routed to the Nginx containers
     const nginxTargetGroup = new elbv2.ApplicationTargetGroup(this, 'LaravelNginxTargetGroup', {
       vpc,
       port: 80,
       protocol: elbv2.ApplicationProtocol.HTTP,
       targetType: elbv2.TargetType.IP,
       healthCheck: {
-        path: '/api/health',
+        path: '/health',
         healthyHttpCodes: '200',
-        interval: cdk.Duration.seconds(30),
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 3,
         timeout: cdk.Duration.seconds(5),
+        interval: cdk.Duration.seconds(30),
       },
+    });
+
+    // Create ALB Listener
+    const listener = alb.addListener('LaravelListener', {
+      port: 80,
+      defaultTargetGroups: [nginxTargetGroup],
     });
 
     // Create ECS Service for Nginx
@@ -273,7 +298,7 @@ export class LaravelStack extends cdk.Stack {
       'Allow MySQL access from PHP-FPM'
     );
 
-    // Add Nginx service to the target group
+    // Add the Nginx service to the target group
     nginxTargetGroup.addTarget(nginxService);
 
     // Output the service names for reference
@@ -287,11 +312,32 @@ export class LaravelStack extends cdk.Stack {
       description: 'Nginx Service Name',
     });
 
+    // Output the task definition ARNs
+    new cdk.CfnOutput(this, 'PhpTaskDefinitionArn', {
+      value: phpTaskDefinition.taskDefinitionArn,
+      description: 'PHP-FPM Task Definition ARN',
+    });
+
+    new cdk.CfnOutput(this, 'NginxTaskDefinitionArn', {
+      value: nginxTaskDefinition.taskDefinitionArn,
+      description: 'Nginx Task Definition ARN',
+    });
+
+    // Output the ECR repository URIs
+    new cdk.CfnOutput(this, 'PhpRepositoryUri', {
+      value: phpRepository.repositoryUri,
+      description: 'PHP-FPM ECR Repository URI',
+    });
+
+    new cdk.CfnOutput(this, 'NginxRepositoryUri', {
+      value: nginxRepository.repositoryUri,
+      description: 'Nginx ECR Repository URI',
+    });
+
     // Output the ALB DNS name
-    // This output can be used to access the application
-    new cdk.CfnOutput(this, 'LoadBalancerDNS', {
+    new cdk.CfnOutput(this, 'AlbDnsName', {
       value: alb.loadBalancerDnsName,
-      description: 'Load Balancer DNS',
+      description: 'Application Load Balancer DNS Name',
     });
   }
 } 
