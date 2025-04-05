@@ -156,7 +156,7 @@ export class LaravelStack extends cdk.Stack {
       stringValue: process.env.APP_KEY || 'base64:' + Buffer.from(Math.random().toString()).toString('base64'),
       description: 'Laravel application key',
       tier: ssm.ParameterTier.STANDARD,
-      type: ssm.ParameterType.SECURE_STRING
+      type: ssm.ParameterType.STRING
     });
 
     // Add a custom resource to handle existing parameters
