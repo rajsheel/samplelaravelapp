@@ -151,11 +151,50 @@ export class LaravelStack extends cdk.Stack {
     });
 
     // Create SSM Parameter for APP_KEY
-    // This parameter stores the Laravel application key
     const appKeyParam = new ssm.StringParameter(this, 'AppKeyParameter', {
       parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`,
-      stringValue: process.env.APP_KEY || Buffer.from(Math.random().toString()).toString('base64'),
+      stringValue: process.env.APP_KEY || 'base64:' + Buffer.from(Math.random().toString()).toString('base64'),
       description: 'Laravel application key',
+      tier: ssm.ParameterTier.STANDARD,
+      type: ssm.ParameterType.SECURE_STRING
+    });
+
+    // Add a custom resource to handle existing parameters
+    new cdk.CustomResource(this, 'AppKeyParameterHandler', {
+      serviceToken: new lambda.Function(this, 'AppKeyParameterFunction', {
+        runtime: lambda.Runtime.NODEJS_18_X,
+        handler: 'index.handler',
+        code: lambda.Code.fromInline(`
+          exports.handler = async (event) => {
+            const AWS = require('aws-sdk');
+            const ssm = new AWS.SSM();
+            
+            if (event.RequestType === 'Create' || event.RequestType === 'Update') {
+              try {
+                await ssm.putParameter({
+                  Name: '${appKeyParam.parameterName}',
+                  Value: '${appKeyParam.stringValue}',
+                  Type: 'SecureString',
+                  Overwrite: true
+                }).promise();
+              } catch (error) {
+                console.error('Error updating parameter:', error);
+              }
+            }
+            
+            return {
+              PhysicalResourceId: '${appKeyParam.parameterName}',
+              Data: {}
+            };
+          };
+        `),
+        initialPolicy: [
+          new iam.PolicyStatement({
+            actions: ['ssm:PutParameter'],
+            resources: ['*']
+          })
+        ]
+      }).functionArn
     });
 
     // Create IAM roles for the ECS tasks
