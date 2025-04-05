@@ -88,9 +88,7 @@ export class LaravelStack extends cdk.Stack {
       engine: rds.DatabaseInstanceEngine.mysql({
         version: rds.MysqlEngineVersion.VER_8_0_35,
       }),
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
-      // For production workloads, consider using T3.MEDIUM or larger
-      // This instance type can be made configurable via environment variables or properties
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MEDIUM),
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [dbSecurityGroup],
@@ -103,15 +101,10 @@ export class LaravelStack extends cdk.Stack {
       allocatedStorage: 20,
       maxAllocatedStorage: 100,
       backupRetention: cdk.Duration.days(7),
-      removalPolicy: cdk.RemovalPolicy.SNAPSHOT, // Preserve data on deletion
+      removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
       monitoringInterval: cdk.Duration.minutes(1),
-      enablePerformanceInsights: true,
-      performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
-      // Add encryption for better security
       storageEncrypted: true,
-      // Add multi-AZ for high availability
       multiAz: true,
-      // Add parameter group for better performance
       parameterGroup: new rds.ParameterGroup(this, 'LaravelDbParameterGroup', {
         engine: rds.DatabaseInstanceEngine.mysql({
           version: rds.MysqlEngineVersion.VER_8_0_35,
@@ -120,7 +113,7 @@ export class LaravelStack extends cdk.Stack {
           'character_set_server': 'utf8mb4',
           'collation_server': 'utf8mb4_unicode_ci',
           'max_connections': '1000',
-          'innodb_buffer_pool_size': '1073741824', // 1GB
+          'innodb_buffer_pool_size': '2147483648', // 2GB for T3.MEDIUM
         },
       }),
     });
