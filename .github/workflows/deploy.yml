@@ -1,26 +1,15 @@
 # GitHub Actions workflow for deploying Laravel application to AWS
 # This workflow builds and deploys the Laravel application to AWS using CDK
 
-name: Deploy Laravel Application
+name: Deploy Laravel Application to AWS
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy to'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          - production
-      version:
-        description: 'Version to deploy (optional)'
-        required: false
-        type: string
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-1
   ECR_REPOSITORY_PHP: laravel-app
   ECR_REPOSITORY_NGINX: laravel-nginx
   ECS_CLUSTER: LaravelCluster
@@ -30,15 +19,18 @@ env:
   ECS_TASK_DEFINITION_NGINX: LaravelNginxTask
   CONTAINER_NAME_PHP: LaravelPhpContainer
   CONTAINER_NAME_NGINX: LaravelNginxContainer
+  APP_ENV: production
+  APP_DEBUG: false
+  APP_URL: https://laravel-app.example.com
 
 jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: true
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
     - name: Checkout
@@ -52,11 +44,6 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
       timeout-minutes: 5
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
 
     - name: Install CDK dependencies
       working-directory: infrastructure
@@ -109,16 +96,48 @@ jobs:
         echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY_NGINX:$IMAGE_TAG"
       timeout-minutes: 10
 
-    - name: Update ECS services
+    - name: Download task definition
       run: |
-        # Update PHP service
-        aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_PHP --force-new-deployment
-        
-        # Update Nginx service
-        aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE_NGINX --force-new-deployment
-        
-        # Wait for services to stabilize
-        aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE_PHP $ECS_SERVICE_NGINX
+        aws ecs describe-task-definition --task-definition $ECS_TASK_DEFINITION_PHP \
+        --query taskDefinition > task-definition-php.json
+        aws ecs describe-task-definition --task-definition $ECS_TASK_DEFINITION_NGINX \
+        --query taskDefinition > task-definition-nginx.json
+      timeout-minutes: 5
+
+    - name: Fill in the new image ID in the Amazon ECS task definition (PHP)
+      id: task-def-php
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: task-definition-php.json
+        container-name: ${{ env.CONTAINER_NAME_PHP }}
+        image: ${{ steps.build-image-php.outputs.image }}
+      timeout-minutes: 5
+
+    - name: Fill in the new image ID in the Amazon ECS task definition (Nginx)
+      id: task-def-nginx
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: task-definition-nginx.json
+        container-name: ${{ env.CONTAINER_NAME_NGINX }}
+        image: ${{ steps.build-image-nginx.outputs.image }}
+      timeout-minutes: 5
+
+    - name: Deploy Amazon ECS task definition (PHP)
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.task-def-php.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE_PHP }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true
+      timeout-minutes: 15
+
+    - name: Deploy Amazon ECS task definition (Nginx)
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.task-def-nginx.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE_NGINX }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true
       timeout-minutes: 15
 
     - name: Verify deployment
