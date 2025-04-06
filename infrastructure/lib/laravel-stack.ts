@@ -79,26 +79,15 @@ export class LaravelStack extends cdk.Stack {
       natGateways: 1, // Use 1 NAT Gateway to reduce costs
     });
 
-    // Create ECS Cluster
-    // This cluster will run our containerized Laravel application
+    // Create ECS Cluster with service discovery
     const cluster = new ecs.Cluster(this, 'LaravelCluster', {
       vpc,
-      // Note: containerInsights is deprecated, but kept for compatibility
       containerInsights: true,
-    });
-
-    // Create Cloud Map namespace for service discovery
-    const namespace = new servicediscovery.PrivateDnsNamespace(this, 'LaravelNamespace', {
-      vpc,
-      name: 'laravel.local',
-      description: 'Private DNS namespace for Laravel services',
-    });
-
-    // Add the namespace to the cluster
-    cluster.addDefaultCloudMapNamespace({
-      type: servicediscovery.NamespaceType.DNS_PRIVATE,
-      vpc,
-      name: 'laravel.local',
+      defaultCloudMapNamespace: {
+        type: servicediscovery.NamespaceType.DNS_PRIVATE,
+        vpc,
+        name: 'laravel.local',
+      },
     });
 
     // Create RDS Security Group
