@@ -211,6 +211,8 @@ export class LaravelStack extends cdk.Stack {
       },
       secrets: {
         APP_KEY: ecs.Secret.fromSsmParameter(appKeyParam),
+        DB_USERNAME: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'username'),
+        DB_PASSWORD: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'password'),
       },
     });
 
@@ -244,7 +246,7 @@ export class LaravelStack extends cdk.Stack {
       executionRole: iamRoles.nginxTaskRole,
     });
 
-    // Add Nginx container to the task definition with updated environment variables
+    // Add Nginx container to the task definition
     const nginxContainer = nginxTaskDefinition.addContainer('LaravelNginxContainer', {
       image: ecs.ContainerImage.fromEcrRepository(nginxRepository, this.node.tryGetContext('GITHUB_SHA') || 'latest'),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelNginx' }),
