@@ -10,6 +10,7 @@ import * as elbv2_targets from 'aws-cdk-lib/aws-elasticloadbalancingv2-targets';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import { Construct } from 'constructs';
 import { LaravelIamRoles } from './iam-roles';
 
@@ -33,27 +34,9 @@ export class LaravelStack extends cdk.Stack {
     cdk.Tags.of(this).add('Project', 'Laravel');
 
     // Create ECR repositories for our Docker images
-    const phpRepository = new ecr.Repository(this, 'LaravelPhpRepository', {
-      repositoryName: 'laravel-app',
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteImages: true,
-      lifecycleRules: [
-        {
-          maxImageCount: 5,
-        },
-      ],
-    });
+    const phpRepository = ecr.Repository.fromRepositoryName(this, 'LaravelPhpRepository', 'laravel-app');
 
-    const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
-      repositoryName: 'laravel-nginx',
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteImages: true,
-      lifecycleRules: [
-        {
-          maxImageCount: 5,
-        },
-      ],
-    });
+    const nginxRepository = ecr.Repository.fromRepositoryName(this, 'LaravelNginxRepository', 'laravel-nginx');
 
     // If deployOnlyECR is true, only deploy ECR repositories
     if (this.node.tryGetContext('deployOnlyECR')) {
@@ -213,6 +196,13 @@ export class LaravelStack extends cdk.Stack {
       circuitBreaker: {
         rollback: false,
       },
+      cloudMapOptions: {
+        name: 'php',
+        dnsRecordType: servicediscovery.DnsRecordType.A,
+        dnsTtl: cdk.Duration.seconds(30),
+        container: phpContainer,
+        containerPort: 9000,
+      },
     });
 
     // Create ECS Task Definition for Nginx
@@ -222,13 +212,13 @@ export class LaravelStack extends cdk.Stack {
       executionRole: iamRoles.nginxTaskRole,
     });
 
-    // Add Nginx container to the task definition
+    // Add Nginx container to the task definition with updated environment variables
     const nginxContainer = nginxTaskDefinition.addContainer('LaravelNginxContainer', {
       image: ecs.ContainerImage.fromEcrRepository(nginxRepository, this.node.tryGetContext('GITHUB_SHA') || 'latest'),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelNginx' }),
       portMappings: [{ containerPort: 80 }],
       environment: {
-        PHP_SERVICE_HOST: phpService.serviceName,
+        PHP_SERVICE_HOST: `${phpService.cloudMapService!.serviceName}.${phpService.cloudMapService!.namespace.namespaceName}`,
         PHP_SERVICE_PORT: '9000',
       },
     });
