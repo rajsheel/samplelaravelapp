@@ -79,6 +79,17 @@ jobs:
         AWS_REGION: ${{ env.AWS_REGION }}
       timeout-minutes: 15
 
+    - name: Verify ECR repositories
+      run: |
+        # Check if PHP repository exists
+        aws ecr describe-repositories --repository-names $ECR_REPOSITORY_PHP || exit 1
+        
+        # Check if Nginx repository exists
+        aws ecr describe-repositories --repository-names $ECR_REPOSITORY_NGINX || exit 1
+        
+        echo "ECR repositories verified successfully"
+      timeout-minutes: 5
+
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
@@ -112,7 +123,7 @@ jobs:
       working-directory: infrastructure
       run: |
         # Deploy the rest of the infrastructure
-        cdk deploy --require-approval never
+        cdk deploy --require-approval never --context GITHUB_SHA=${{ github.sha }}
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
