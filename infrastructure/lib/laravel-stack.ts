@@ -34,9 +34,27 @@ export class LaravelStack extends cdk.Stack {
     cdk.Tags.of(this).add('Project', 'Laravel');
 
     // Create ECR repositories for our Docker images
-    const phpRepository = ecr.Repository.fromRepositoryName(this, 'LaravelPhpRepository', 'laravel-app');
+    const phpRepository = new ecr.Repository(this, 'LaravelPhpRepository', {
+      repositoryName: 'laravel-app',
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      emptyOnDelete: true,
+      lifecycleRules: [
+        {
+          maxImageCount: 5,
+        },
+      ],
+    });
 
-    const nginxRepository = ecr.Repository.fromRepositoryName(this, 'LaravelNginxRepository', 'laravel-nginx');
+    const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
+      repositoryName: 'laravel-nginx',
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      emptyOnDelete: true,
+      lifecycleRules: [
+        {
+          maxImageCount: 5,
+        },
+      ],
+    });
 
     // If deployOnlyECR is true, only deploy ECR repositories
     if (this.node.tryGetContext('deployOnlyECR')) {
