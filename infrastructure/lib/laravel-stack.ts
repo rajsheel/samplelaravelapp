@@ -187,6 +187,7 @@ export class LaravelStack extends cdk.Stack {
     const phpContainer = phpTaskDefinition.addContainer('LaravelPhpContainer', {
       image: ecs.ContainerImage.fromEcrRepository(phpRepository, this.node.tryGetContext('GITHUB_SHA') || 'latest'),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'LaravelPhp' }),
+      portMappings: [{ containerPort: 9000 }],
       environment: {
         DB_CONNECTION: 'mysql',
         DB_HOST: dbInstance.dbInstanceEndpointAddress,
