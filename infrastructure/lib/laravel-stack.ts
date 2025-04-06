@@ -69,6 +69,20 @@ export class LaravelStack extends cdk.Stack {
       containerInsights: true,
     });
 
+    // Create Cloud Map namespace for service discovery
+    const namespace = new servicediscovery.PrivateDnsNamespace(this, 'LaravelNamespace', {
+      vpc,
+      name: 'laravel.local',
+      description: 'Private DNS namespace for Laravel services',
+    });
+
+    // Add the namespace to the cluster
+    cluster.addDefaultCloudMapNamespace({
+      type: servicediscovery.NamespaceType.DNS_PRIVATE,
+      vpc,
+      name: 'laravel.local',
+    });
+
     // Create RDS Security Group
     // This security group controls access to the RDS instance
     const dbSecurityGroup = new ec2.SecurityGroup(this, 'RdsSecurityGroup', {
