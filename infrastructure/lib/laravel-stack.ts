@@ -36,8 +36,8 @@ export class LaravelStack extends cdk.Stack {
     // Create ECR repositories for our Docker images
     const phpRepository = new ecr.Repository(this, 'LaravelPhpRepository', {
       repositoryName: 'laravel-app',
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      emptyOnDelete: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteImages: true,
       lifecycleRules: [
         {
           maxImageCount: 5,
@@ -47,8 +47,8 @@ export class LaravelStack extends cdk.Stack {
 
     const nginxRepository = new ecr.Repository(this, 'LaravelNginxRepository', {
       repositoryName: 'laravel-nginx',
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      emptyOnDelete: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteImages: true,
       lifecycleRules: [
         {
           maxImageCount: 5,
