@@ -163,12 +163,23 @@ export class LaravelStack extends cdk.Stack {
       description: 'RDS Secret ARN',
     });
 
-    // Reference existing SSM Parameter for APP_KEY
-    const appKeyParam = ssm.StringParameter.fromStringParameterName(
-      this,
-      'AppKeyParameter',
-      `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`
-    );
+    // Create or reference SSM Parameter for APP_KEY
+    let appKeyParam;
+    try {
+      appKeyParam = ssm.StringParameter.fromStringParameterName(
+        this,
+        'AppKeyParameter',
+        `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`
+      );
+    } catch (error) {
+      // If the parameter doesn't exist, create it with a default value
+      appKeyParam = new ssm.StringParameter(this, 'AppKeyParameter', {
+        parameterName: `/${process.env.CDK_DEFAULT_ACCOUNT}/prod/APP_KEY`,
+        stringValue: 'base64:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=', // Default Laravel key
+        description: 'Laravel application key',
+        tier: ssm.ParameterTier.STANDARD,
+      });
+    }
 
     // Create IAM roles for the ECS tasks
     const iamRoles = new LaravelIamRoles(this, 'LaravelIamRoles', {
